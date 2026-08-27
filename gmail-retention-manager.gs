@@ -167,6 +167,14 @@ const RETENTION_FACTORY_DEFAULTS = Object.freeze({
  */
 const RETENTION_SETTINGS_PROPERTY_KEY = 'GMAIL_RETENTION_CONFIG';
 const RETENTION_SETTINGS_SCHEMA_VERSION = 1;
+const RETENTION_RUNTIME_STATE_PROPERTY_KEY = 'GMAIL_RETENTION_RUNTIME_STATE';
+const RETENTION_RUNTIME_STATE_SCHEMA_VERSION = 1;
+const RETENTION_ADMIN_PREFERENCES_PROPERTY_KEY =
+  'GMAIL_RETENTION_ADMIN_PREFERENCES';
+const RETENTION_ADMIN_PREFERENCES_SCHEMA_VERSION = 1;
+const RETENTION_ADMIN_FACTORY_PREFERENCES = Object.freeze({
+  theme: 'dark',
+});
 
 /*
  * These values control application behavior but are not user preferences. They
@@ -558,7 +566,7 @@ function getRetentionSettings() {
 }
 
 /**
- * Returns the versioned active configuration for the future admin interface.
+ * Returns the versioned active configuration for the admin interface.
  *
  * @return {{schemaVersion: number, settings: Object}} Detached configuration.
  */
@@ -566,6 +574,347 @@ function getRetentionConfiguration() {
   return {
     schemaVersion: RETENTION_SETTINGS_SCHEMA_VERSION,
     settings: copyRetentionSettings(getRetentionSettings()),
+  };
+}
+
+/**
+ * Validates preferences that affect only the administration interface.
+ * Keeping them separate prevents display choices from affecting retention jobs.
+ *
+ * @param {*} preferences Candidate admin preferences.
+ * @return {{theme: string}} Validated preferences.
+ */
+function validateRetentionAdminPreferences(preferences) {
+  if (!isConfigurationObject(preferences)) {
+    throw new Error('admin preferences must be an object.');
+  }
+
+  if (!['dark', 'light'].includes(preferences.theme)) {
+    throw new Error('admin theme must be dark or light.');
+  }
+
+  return { theme: preferences.theme };
+}
+
+/**
+ * Persists private admin-interface preferences in Script Properties.
+ *
+ * @param {Object} preferences Candidate preferences.
+ * @return {{theme: string}} Saved preferences.
+ */
+function saveRetentionAdminPreferences(preferences) {
+  const validated = validateRetentionAdminPreferences(preferences);
+  const storedPreferences = {
+    schemaVersion: RETENTION_ADMIN_PREFERENCES_SCHEMA_VERSION,
+    preferences: validated,
+  };
+
+  PropertiesService.getScriptProperties().setProperty(
+    RETENTION_ADMIN_PREFERENCES_PROPERTY_KEY,
+    JSON.stringify(storedPreferences),
+  );
+
+  return { ...validated };
+}
+
+/**
+ * Loads admin preferences and initializes or repairs the noncritical theme
+ * preference with the dark factory default when necessary.
+ *
+ * @return {{theme: string}} Saved or default preferences.
+ */
+function getRetentionAdminPreferences() {
+  const storedValue = PropertiesService.getScriptProperties().getProperty(
+    RETENTION_ADMIN_PREFERENCES_PROPERTY_KEY,
+  );
+
+  if (storedValue === null) {
+    return saveRetentionAdminPreferences(
+      RETENTION_ADMIN_FACTORY_PREFERENCES,
+    );
+  }
+
+  try {
+    const storedPreferences = JSON.parse(storedValue);
+
+    if (
+      !isConfigurationObject(storedPreferences) ||
+      storedPreferences.schemaVersion !==
+        RETENTION_ADMIN_PREFERENCES_SCHEMA_VERSION
+    ) {
+      throw new Error('unsupported or missing admin-preference schema');
+    }
+
+    return validateRetentionAdminPreferences(storedPreferences.preferences);
+  } catch (error) {
+    console.error(
+      `Resetting invalid ${RETENTION_ADMIN_PREFERENCES_PROPERTY_KEY}: ` +
+        `${error.message}`,
+    );
+    return saveRetentionAdminPreferences(
+      RETENTION_ADMIN_FACTORY_PREFERENCES,
+    );
+  }
+}
+
+/** @return {Object} Empty operational state for a new installation. */
+function createDefaultRetentionRuntimeState() {
+  return {
+    schemaVersion: RETENTION_RUNTIME_STATE_SCHEMA_VERSION,
+    lastRunStatus: 'never',
+    lastRunStartedAt: null,
+    lastRunCompletedAt: null,
+    lastSuccessfulRunAt: null,
+    lastErrorAt: null,
+    lastErrorMessage: null,
+    lastResult: null,
+  };
+}
+
+/**
+ * Loads internal dashboard state without allowing corrupt status data to block
+ * Gmail retention. User settings remain subject to the stricter validation path.
+ *
+ * @return {Object} Detached runtime state.
+ */
+function getRetentionRuntimeState() {
+  const storedValue = PropertiesService.getScriptProperties().getProperty(
+    RETENTION_RUNTIME_STATE_PROPERTY_KEY,
+  );
+
+  if (storedValue === null) {
+    return createDefaultRetentionRuntimeState();
+  }
+
+  try {
+    const parsed = JSON.parse(storedValue);
+
+    if (
+      !isConfigurationObject(parsed) ||
+      parsed.schemaVersion !== RETENTION_RUNTIME_STATE_SCHEMA_VERSION
+    ) {
+      throw new Error('unsupported or missing runtime-state schema');
+    }
+
+    return {
+      ...createDefaultRetentionRuntimeState(),
+      ...parsed,
+      schemaVersion: RETENTION_RUNTIME_STATE_SCHEMA_VERSION,
+    };
+  } catch (error) {
+    console.error(
+      `Ignoring invalid ${RETENTION_RUNTIME_STATE_PROPERTY_KEY}: ` +
+        `${error.message}`,
+    );
+    return createDefaultRetentionRuntimeState();
+  }
+}
+
+/**
+ * Updates the internal dashboard state. A status-write failure is logged but
+ * never interrupts retention processing.
+ *
+ * @param {Object} changes Runtime-state fields to replace.
+ */
+function updateRetentionRuntimeStateSafely(changes) {
+  try {
+    const state = {
+      ...getRetentionRuntimeState(),
+      ...changes,
+      schemaVersion: RETENTION_RUNTIME_STATE_SCHEMA_VERSION,
+    };
+
+    PropertiesService.getScriptProperties().setProperty(
+      RETENTION_RUNTIME_STATE_PROPERTY_KEY,
+      JSON.stringify(state),
+    );
+  } catch (error) {
+    console.error(
+      `Unable to update ${RETENTION_RUNTIME_STATE_PROPERTY_KEY}: ` +
+        `${error && error.stack ? error.stack : error}`,
+    );
+  }
+}
+
+/** @return {string} Compact error text safe for persistent dashboard state. */
+function getRuntimeErrorMessage(error) {
+  const message = error && error.message ? error.message : String(error);
+  return message.slice(0, 2000);
+}
+
+/**
+ * Provides limited defense in depth in addition to the required owner-only web
+ * app deployment. Some Apps Script execution contexts intentionally hide the
+ * active user's email, so deployment access remains the authoritative control.
+ *
+ * @return {{ownerEmail: string, activeEmail: string}} Session identity details.
+ */
+function assertAdminOwnerAccess() {
+  const ownerEmail = Session.getEffectiveUser().getEmail() || '';
+  const activeEmail = Session.getActiveUser().getEmail() || '';
+
+  if (
+    ownerEmail &&
+    activeEmail &&
+    ownerEmail.toLowerCase() !== activeEmail.toLowerCase()
+  ) {
+    throw new Error('Access denied. This admin page is restricted to its owner.');
+  }
+
+  return { ownerEmail, activeEmail };
+}
+
+/**
+ * Serves the private administration interface.
+ *
+ * @return {HtmlOutput} Admin webpage.
+ */
+function doGet() {
+  assertAdminOwnerAccess();
+
+  return HtmlService.createHtmlOutputFromFile('Admin')
+    .setTitle('Gmail Retention Manager')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+/**
+ * Returns read-only information about scheduled retention triggers. Apps Script
+ * exposes trigger type and handler but not the recurrence of an existing clock
+ * trigger, so exact frequency will be available after app-managed scheduling.
+ *
+ * @return {Object} Trigger status for the dashboard.
+ */
+function getRetentionTriggerStatus() {
+  const matchingTriggers = ScriptApp.getProjectTriggers().filter(trigger =>
+    trigger.getHandlerFunction() === 'enforceGmailRetention' &&
+      trigger.getEventType() === ScriptApp.EventType.CLOCK,
+  );
+  const triggerCount = matchingTriggers.length;
+
+  if (triggerCount === 0) {
+    return {
+      enabled: false,
+      triggerCount,
+      status: 'disabled',
+      summary: 'No scheduled retention trigger was detected.',
+    };
+  }
+
+  if (triggerCount === 1) {
+    return {
+      enabled: true,
+      triggerCount,
+      status: 'enabled',
+      summary:
+        'A time-driven trigger is active. Its exact frequency is not available ' +
+        'until the schedule is managed by this application.',
+    };
+  }
+
+  return {
+    enabled: true,
+    triggerCount,
+    status: 'warning',
+    summary:
+      `${triggerCount} retention triggers were detected. Duplicate runs may ` +
+      'occur until the schedule is repaired.',
+  };
+}
+
+/**
+ * Loads all data required to render or refresh the admin page.
+ *
+ * @return {Object} Serializable admin-page data.
+ */
+function getAdminPageData() {
+  const identity = assertAdminOwnerAccess();
+
+  return {
+    application: {
+      name: 'Gmail Retention Manager',
+      version: RETENTION_CONFIG.VERSION,
+      repositoryUrl: RETENTION_CONFIG.PROJECT_REPOSITORY_URL,
+      releasesUrl: `${RETENTION_CONFIG.PROJECT_REPOSITORY_URL}/releases`,
+      currentReleaseUrl: getProjectReleaseUrl(),
+      ownerEmail: identity.ownerEmail,
+      timeZone: Session.getScriptTimeZone(),
+    },
+    configurationSchemaVersion: RETENTION_SETTINGS_SCHEMA_VERSION,
+    settings: copyRetentionSettings(getRetentionSettings()),
+    adminPreferences: getRetentionAdminPreferences(),
+    runtime: getRetentionRuntimeState(),
+    trigger: getRetentionTriggerStatus(),
+  };
+}
+
+/**
+ * Saves the administration-page color theme independently from retention
+ * settings so switching appearance never creates unsaved retention changes.
+ *
+ * @param {string} theme Requested dark or light theme.
+ * @return {{theme: string}} Saved preference.
+ */
+function saveAdminTheme(theme) {
+  assertAdminOwnerAccess();
+  return saveRetentionAdminPreferences({ theme });
+}
+
+/**
+ * Saves admin-page settings after server validation and confirmation of changes
+ * that can orphan existing Gmail labels or filters.
+ *
+ * @param {Object} request Settings and risk acknowledgements from the webpage.
+ * @return {Object} Saved settings and timestamp.
+ */
+function saveAdminPageSettings(request) {
+  assertAdminOwnerAccess();
+
+  if (!isConfigurationObject(request)) {
+    throw new Error('The settings request must be an object.');
+  }
+
+  const validatedSettings = validateRetentionSettings(request.settings);
+  const currentSettings = getRetentionSettings();
+  const acknowledgements = isConfigurationObject(request.acknowledgements)
+    ? request.acknowledgements
+    : {};
+  const rootChanged = validatedSettings.ROOT_LABEL !== currentSettings.ROOT_LABEL;
+  const systemLabelChanged =
+    validatedSettings.SYSTEM_NOTIFICATION_LABEL_SUFFIX !==
+      currentSettings.SYSTEM_NOTIFICATION_LABEL_SUFFIX;
+
+  if (rootChanged && acknowledgements.rootLabelChange !== true) {
+    throw new Error(
+      'Confirm that changing the root label does not rename existing Gmail ' +
+      'labels or update Gmail filters.',
+    );
+  }
+  if (systemLabelChanged && acknowledgements.systemLabelChange !== true) {
+    throw new Error(
+      'Confirm that changing the system-notification label may leave the old ' +
+      'internal label behind.',
+    );
+  }
+
+  return {
+    settings: saveRetentionSettings(validatedSettings),
+    savedAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Runs retention from the admin page and returns refreshed operational data.
+ *
+ * @return {Object} Run result plus current runtime and trigger status.
+ */
+function runRetentionFromAdmin() {
+  assertAdminOwnerAccess();
+  const result = enforceGmailRetention();
+
+  return {
+    result,
+    runtime: getRetentionRuntimeState(),
+    trigger: getRetentionTriggerStatus(),
   };
 }
 
@@ -952,16 +1301,67 @@ function escapeRegExp(value) {
 
 /**
  * Main entry point. Configure a daily time-driven trigger for this function.
+ * The returned object is ignored by scheduled triggers and displayed by the
+ * admin page after a manual run.
+ *
+ * @return {Object} Serializable outcome of the retention run.
  */
 function enforceGmailRetention() {
+  const startedAt = new Date();
+  updateRetentionRuntimeStateSafely({
+    lastRunStatus: 'running',
+    lastRunStartedAt: startedAt.toISOString(),
+    lastRunCompletedAt: null,
+    lastResult: null,
+  });
+
+  try {
+    const result = executeGmailRetention_();
+    const completedAt = new Date();
+    const completedResult = {
+      ...result,
+      startedAt: startedAt.toISOString(),
+      completedAt: completedAt.toISOString(),
+    };
+    const stateChanges = {
+      lastRunStatus: result.status,
+      lastRunCompletedAt: completedAt.toISOString(),
+      lastResult: completedResult,
+    };
+
+    if (result.status === 'success') {
+      stateChanges.lastSuccessfulRunAt = completedAt.toISOString();
+    }
+
+    updateRetentionRuntimeStateSafely(stateChanges);
+    return completedResult;
+  } catch (error) {
+    const failedAt = new Date().toISOString();
+    updateRetentionRuntimeStateSafely({
+      lastRunStatus: 'error',
+      lastRunCompletedAt: failedAt,
+      lastErrorAt: failedAt,
+      lastErrorMessage: getRuntimeErrorMessage(error),
+      lastResult: null,
+    });
+    throw error;
+  }
+}
+
+/** @return {Object} Core retention outcome before dashboard metadata is added. */
+function executeGmailRetention_() {
   const settings = getRetentionSettings();
   verboseLog('MAIN', 'enforceGmailRetention() entered.');
   const lock = LockService.getScriptLock();
   verboseLog('LOCK', `Attempting script lock for ${RETENTION_CONFIG.LOCK_TIMEOUT_MS} ms.`);
 
   if (!lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
-    console.log('Another retention run is already active. This run was skipped.');
-    return;
+    const reason = 'Another retention run is already active. This run was skipped.';
+    console.log(reason);
+    return {
+      status: 'skipped',
+      reason,
+    };
   }
 
   try {
@@ -1016,7 +1416,15 @@ function enforceGmailRetention() {
       !systemNotificationLabel
     ) {
       console.log('No valid retention labels were found. Nothing to process.');
-      return;
+      return {
+        status: 'success',
+        reviewedConversationCount: 0,
+        movedMessageCount: 0,
+        movedConversationCount: 0,
+        reportedMessageCount: 0,
+        removedRetentionLabelCount: 0,
+        summaryEmailCount: 0,
+      };
     }
 
     /*
@@ -1197,19 +1605,29 @@ function enforceGmailRetention() {
      * Only ordinary deleted messages generate a notification. When the only
      * deletion is an expired system notification, no new notification is sent.
      */
-    if (deletedMessageRecords.length > 0) {
-      sendDeletionSummaries(deletedMessageRecords, now);
-    }
+    const summaryEmailCount = deletedMessageRecords.length > 0
+      ? sendDeletionSummaries(deletedMessageRecords, now)
+      : 0;
 
-    console.log(
-      [
-        `Reviewed ${threadMap.size} conversation(s).`,
-        `Moved ${deletionResult.movedMessageCount} active message(s) to Trash ` +
-          `from ${deletionResult.movedThreadCount} conversation(s).`,
-        `Reported ${deletedMessageRecords.length} deleted message(s).`,
-        `Removed ${removedRetentionLabelCount} redundant retention label(s).`,
-      ].join(' '),
-    );
+    const result = {
+      status: 'success',
+      reviewedConversationCount: threadMap.size,
+      movedMessageCount: deletionResult.movedMessageCount,
+      movedConversationCount: deletionResult.movedThreadCount,
+      reportedMessageCount: deletedMessageRecords.length,
+      removedRetentionLabelCount,
+      summaryEmailCount,
+    };
+
+    console.log([
+      `Reviewed ${result.reviewedConversationCount} conversation(s).`,
+      `Moved ${result.movedMessageCount} active message(s) to Trash ` +
+        `from ${result.movedConversationCount} conversation(s).`,
+      `Reported ${result.reportedMessageCount} deleted message(s).`,
+      `Removed ${result.removedRetentionLabelCount} redundant retention label(s).`,
+    ].join(' '));
+
+    return result;
   } catch (error) {
     console.error(
       `Gmail Retention Manager ${RETENTION_CONFIG.VERSION} failed: ` +
@@ -1825,9 +2243,10 @@ function buildNotificationSubject(
   const partSuffix = totalParts > 1
     ? ` — part ${partNumber} of ${totalParts}`
     : '';
+  const prefix = getRetentionSettings().NOTIFICATION_SUBJECT_PREFIX;
+  const subjectBody = `${formatMessageCount(totalMessageCount)} deleted${partSuffix}`;
 
-  return `${getRetentionSettings().NOTIFICATION_SUBJECT_PREFIX} ` +
-    `${formatMessageCount(totalMessageCount)} deleted${partSuffix}`;
+  return prefix ? `${prefix} ${subjectBody}` : subjectBody;
 }
 
 /**
@@ -1972,6 +2391,7 @@ function deleteSystemNotificationLabelIfUnused() {
  *
  * @param {Array} records Deleted message records.
  * @param {Date} runDate Date the retention run occurred.
+ * @return {number} Number of summary emails sent.
  */
 function sendDeletionSummaries(records, runDate) {
   verboseLog('NOTIFICATION', {
@@ -2072,6 +2492,8 @@ function sendDeletionSummaries(records, runDate) {
     notificationThread.moveToInbox();
     notificationThread.markUnread();
   });
+
+  return chunks.length;
 }
 
 /**
@@ -2153,6 +2575,15 @@ function buildHtmlSummary(
           </a>
         </strong>`
     : '';
+  const verboseWarning = getRetentionSettings().VERBOSE_LOGGING
+    ? `
+      <div style="margin:16px 0 0;padding:12px;border:1px solid #f9ab00;border-radius:6px;background:#fef7e0;color:#7a4f01;">
+        <strong>Verbose logging is enabled.</strong>
+        Execution logs may contain message subjects, label names, thread IDs,
+        and other mailbox metadata. Use verbose logging only while troubleshooting
+        and turn it off afterward.
+      </div>`
+    : '';
 
   return `
     <div style="font-family:Arial,sans-serif;font-size:14px;color:#202124;">
@@ -2181,6 +2612,7 @@ function buildHtmlSummary(
         ${escapeHtml(getNotificationRetentionLabelName())} and will be
         moved to Trash silently when its retention period expires.
       </p>
+      ${verboseWarning}
       <p style="margin:8px 0 0;color:#5f6368;font-size:12px;">
         Generated by
         <a href="${escapeHtml(RETENTION_CONFIG.PROJECT_REPOSITORY_URL)}">Gmail Retention Manager</a>
@@ -2229,6 +2661,14 @@ function buildPlainTextSummary(
     `This notification has ${getNotificationRetentionLabelName()} ` +
     'and will be moved to Trash silently when its retention period expires.',
   );
+  if (getRetentionSettings().VERBOSE_LOGGING) {
+    lines.push('');
+    lines.push(
+      'WARNING: Verbose logging is enabled. Execution logs may contain ' +
+      'message subjects, label names, thread IDs, and other mailbox metadata. ' +
+      'Use it only while troubleshooting and turn it off afterward.',
+    );
+  }
   lines.push('');
   lines.push(
     `Generated by Gmail Retention Manager v${RETENTION_CONFIG.VERSION}: ` +
