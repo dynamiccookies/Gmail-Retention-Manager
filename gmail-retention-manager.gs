@@ -665,6 +665,7 @@ function createDefaultRetentionRuntimeState() {
     lastRunStartedAt: null,
     lastRunCompletedAt: null,
     lastSuccessfulRunAt: null,
+    lastSuccessfulResult: null,
     lastErrorAt: null,
     lastErrorMessage: null,
     lastResult: null,
@@ -1331,6 +1332,7 @@ function enforceGmailRetention() {
 
     if (result.status === 'success') {
       stateChanges.lastSuccessfulRunAt = completedAt.toISOString();
+      stateChanges.lastSuccessfulResult = completedResult;
     }
 
     updateRetentionRuntimeStateSafely(stateChanges);

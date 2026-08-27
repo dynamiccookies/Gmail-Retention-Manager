@@ -40,6 +40,7 @@
         --focus-ring: rgba(79, 141, 247, 0.32);
         --primary-contrast: #ffffff;
         --spinner-track: #3b4656;
+        --overlay-background: rgba(4, 8, 15, 0.78);
         --shadow: 0 1px 2px rgba(0, 0, 0, 0.32),
           0 8px 24px rgba(0, 0, 0, 0.16);
         --radius: 14px;
@@ -81,6 +82,7 @@
         --focus-ring: rgba(23, 105, 224, 0.14);
         --primary-contrast: #ffffff;
         --spinner-track: #d8dee8;
+        --overlay-background: rgba(15, 23, 42, 0.48);
         --shadow: 0 1px 2px rgba(16, 24, 40, 0.05),
           0 1px 3px rgba(16, 24, 40, 0.1);
       }
@@ -96,6 +98,10 @@
         color: var(--text);
         font-family: Arial, Helvetica, sans-serif;
         line-height: 1.5;
+      }
+
+      body.scan-running {
+        overflow: hidden;
       }
 
       button,
@@ -336,6 +342,51 @@
       .panel-header p {
         margin-bottom: 0;
         color: var(--muted);
+      }
+
+      .collapsible-panel > .panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        padding-bottom: 20px;
+        border-bottom: 0;
+        cursor: pointer;
+        list-style: none;
+        user-select: none;
+      }
+
+      .collapsible-panel > .panel-header::-webkit-details-marker {
+        display: none;
+      }
+
+      .collapsible-panel > .panel-header::after {
+        width: 11px;
+        height: 11px;
+        flex: 0 0 auto;
+        margin-right: 4px;
+        border-right: 2px solid var(--muted);
+        border-bottom: 2px solid var(--muted);
+        content: "";
+        transform: rotate(-45deg);
+        transition: transform 160ms ease;
+      }
+
+      .collapsible-panel > .panel-header:hover {
+        background: var(--surface-muted);
+      }
+
+      .collapsible-panel > .panel-header:focus-visible {
+        outline: 3px solid var(--focus-ring);
+        outline-offset: -3px;
+      }
+
+      .collapsible-panel[open] > .panel-header {
+        border-bottom: 1px solid var(--border);
+      }
+
+      .collapsible-panel[open] > .panel-header::after {
+        transform: rotate(45deg);
       }
 
       .panel-body {
@@ -659,6 +710,81 @@
         animation: spin 800ms linear infinite;
       }
 
+      .scan-progress-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background: var(--overlay-background);
+        backdrop-filter: blur(5px);
+      }
+
+      .scan-progress-card {
+        width: min(480px, 100%);
+        padding: 32px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--surface);
+        box-shadow: 0 24px 70px rgba(0, 0, 0, 0.35);
+        text-align: center;
+      }
+
+      .scan-progress-card .spinner {
+        width: 52px;
+        height: 52px;
+        margin-bottom: 20px;
+        border-width: 4px;
+      }
+
+      .scan-progress-card h2 {
+        margin-bottom: 10px;
+      }
+
+      .scan-confirmation-icon {
+        display: grid;
+        width: 52px;
+        height: 52px;
+        margin: 0 auto 20px;
+        place-items: center;
+        border: 1px solid var(--warning-border);
+        border-radius: 50%;
+        background: var(--warning-soft);
+        color: var(--warning);
+        font-size: 27px;
+        font-weight: 800;
+      }
+
+      .scan-progress-description {
+        max-width: 390px;
+        margin: 0 auto;
+        color: var(--muted);
+      }
+
+      .scan-elapsed {
+        display: inline-flex;
+        margin: 20px 0 0;
+        padding: 6px 11px;
+        border-radius: 999px;
+        background: var(--primary-soft);
+        color: var(--primary-soft-text);
+        font-size: 13px;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .scan-confirmation-actions {
+        display: flex;
+        justify-content: center;
+        gap: 10px;
+        margin-top: 24px;
+      }
+
+      .scan-confirmation-actions .button {
+        min-width: 120px;
+      }
+
       .resource-footer {
         display: flex;
         align-items: center;
@@ -686,6 +812,22 @@
       }
 
       @media (max-width: 640px) {
+        .scan-progress-overlay {
+          padding: 16px;
+        }
+
+        .scan-progress-card {
+          padding: 26px 20px;
+        }
+
+        .scan-confirmation-actions {
+          flex-direction: column;
+        }
+
+        .scan-confirmation-actions .button {
+          width: 100%;
+        }
+
         .shell {
           width: min(100% - 20px, 1120px);
           padding-top: 18px;
@@ -761,6 +903,56 @@
       </div>
     </section>
 
+    <section
+      class="scan-progress-overlay"
+      id="scanProgressOverlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="scanConfirmationTitle"
+      aria-describedby="scanConfirmationDescription"
+      tabindex="-1"
+      hidden
+    >
+      <div class="scan-progress-card">
+        <div id="scanConfirmationView">
+          <div class="scan-confirmation-icon" aria-hidden="true">!</div>
+          <p class="eyebrow">Confirmation required</p>
+          <h2 id="scanConfirmationTitle">Run Gmail retention now?</h2>
+          <p class="scan-progress-description" id="scanConfirmationDescription">
+            Any messages that are currently eligible under your saved retention
+            settings will be moved to Trash.
+          </p>
+          <div class="scan-confirmation-actions">
+            <button
+              class="button button-secondary"
+              id="cancelScanButton"
+              type="button"
+            >
+              Cancel
+            </button>
+            <button
+              class="button button-primary"
+              id="confirmScanButton"
+              type="button"
+            >
+              Run scan
+            </button>
+          </div>
+        </div>
+
+        <div id="scanProgressView" hidden>
+          <div class="spinner" aria-hidden="true"></div>
+          <p class="eyebrow">Retention scan in progress</p>
+          <h2 id="scanProgressTitle">Please wait while Gmail is scanned</h2>
+          <p class="scan-progress-description" id="scanProgressDescription">
+            This can take several minutes for a large mailbox. Keep this page open
+            until the scan finishes and the results appear.
+          </p>
+          <p class="scan-elapsed" id="scanElapsed">Elapsed time: 0:00</p>
+        </div>
+      </div>
+    </section>
+
     <main class="shell" id="app" hidden>
       <header class="topbar">
         <div>
@@ -828,11 +1020,13 @@
       </section>
 
       <form id="settingsForm" novalidate>
-        <section class="panel">
-          <div class="panel-header">
-            <h2>Retention settings</h2>
-            <p>Control the Gmail labels recognized by the retention process.</p>
-          </div>
+        <details class="panel collapsible-panel" id="retentionSettingsPanel">
+          <summary class="panel-header">
+            <div>
+              <h2>Retention settings</h2>
+              <p>Control the Gmail labels recognized by the retention process.</p>
+            </div>
+          </summary>
 
           <div class="panel-body">
             <div class="form-grid">
@@ -873,13 +1067,15 @@
               </div>
             </div>
           </div>
-        </section>
+        </details>
 
-        <section class="panel">
-          <div class="panel-header">
-            <h2>Summary email settings</h2>
-            <p>Control the email sent after messages are moved to Trash.</p>
-          </div>
+        <details class="panel collapsible-panel" id="summaryEmailSettingsPanel">
+          <summary class="panel-header">
+            <div>
+              <h2>Summary email settings</h2>
+              <p>Control the email sent after messages are moved to Trash.</p>
+            </div>
+          </summary>
 
           <div class="panel-body">
             <div class="form-grid">
@@ -911,13 +1107,15 @@
 
             </div>
           </div>
-        </section>
+        </details>
 
-        <section class="panel">
-          <div class="panel-header">
-            <h2>Advanced settings</h2>
-            <p>Diagnostic and internal options that normally should not be changed.</p>
-          </div>
+        <details class="panel collapsible-panel" id="advancedSettingsPanel">
+          <summary class="panel-header">
+            <div>
+              <h2>Advanced settings</h2>
+              <p>Diagnostic and internal options that normally should not be changed.</p>
+            </div>
+          </summary>
 
           <div class="panel-body">
             <div class="switch-row">
@@ -967,7 +1165,7 @@
               </div>
             </div>
           </div>
-        </section>
+        </details>
 
         <div class="actions">
           <span class="unsaved" id="unsavedText" hidden>Unsaved changes</span>
@@ -1009,11 +1207,16 @@
       let pendingTheme = null;
       let themeSaveTimer = null;
       let themeSaveInFlight = false;
+      let scanStartedAt = null;
+      let scanElapsedTimer = null;
+      let scanInProgress = false;
 
       document.addEventListener('DOMContentLoaded', () => {
         [
           'themeColorMeta', 'themeToggle', 'themeModeLabel',
           'loadingScreen', 'fatalScreen', 'fatalMessage', 'retryButton', 'app',
+          'scanProgressOverlay', 'scanConfirmationView', 'scanProgressView',
+          'cancelScanButton', 'confirmScanButton', 'scanElapsed',
           'ownerText', 'versionPill', 'globalNotice', 'verboseNotice',
           'statusPill', 'statusDetail', 'scheduleValue', 'scheduleDetail',
           'lastSuccessValue', 'lastSuccessDetail', 'lastErrorValue',
@@ -1032,12 +1235,21 @@
         elements.themeToggle.addEventListener('change', queueThemePreferenceSave);
         elements.retryButton.addEventListener('click', loadAdminPage);
         elements.runButton.addEventListener('click', runRetentionNow);
+        elements.cancelScanButton.addEventListener('click', closeScanConfirmation);
+        elements.confirmScanButton.addEventListener(
+          'click',
+          beginConfirmedRetentionScan,
+        );
+        elements.scanProgressOverlay.addEventListener(
+          'keydown',
+          handleScanModalKeydown,
+        );
         elements.discardButton.addEventListener('click', discardChanges);
         elements.settingsForm.addEventListener('submit', saveSettings);
         elements.settingsForm.addEventListener('input', handleFormChange);
         elements.settingsForm.addEventListener('change', handleFormChange);
         window.addEventListener('beforeunload', event => {
-          if (!dirty) {
+          if (!dirty && !scanInProgress) {
             return;
           }
           event.preventDefault();
@@ -1192,10 +1404,16 @@
 
       function renderRuntime(runtime) {
         const successfulAt = runtime.lastSuccessfulRunAt;
+        const successfulResult = runtime.lastSuccessfulResult ||
+          (runtime.lastResult && runtime.lastResult.status === 'success'
+            ? runtime.lastResult
+            : null);
         elements.lastSuccessValue.textContent = successfulAt
           ? formatTimestamp(successfulAt)
           : 'No successful scan recorded';
-        elements.lastSuccessDetail.textContent = formatRunResult(runtime.lastResult);
+        elements.lastSuccessDetail.textContent = successfulAt
+          ? formatRunResult(successfulResult)
+          : 'Run history will appear after the next successful scan.';
 
         if (!runtime.lastErrorAt) {
           elements.lastErrorValue.textContent = 'None recorded';
@@ -1223,7 +1441,7 @@
 
       function formatRunResult(result) {
         if (!result) {
-          return 'Run history will appear after the next scan.';
+          return 'Detailed results were not recorded for this earlier scan.';
         }
         if (result.status === 'skipped') {
           return result.reason || 'The run was skipped.';
@@ -1232,8 +1450,42 @@
         const reviewed = Number(result.reviewedConversationCount || 0);
         const moved = Number(result.movedMessageCount || 0);
         const summaries = Number(result.summaryEmailCount || 0);
-        return `Reviewed ${reviewed} conversation(s); moved ${moved} message(s); ` +
+        const duration = formatRunDuration(result.startedAt, result.completedAt);
+        const durationText = duration ? `Run time: ${duration}. ` : '';
+        return `${durationText}Reviewed ${reviewed} conversation(s); ` +
+          `moved ${moved} message(s); ` +
           `sent ${summaries} summary email(s).`;
+      }
+
+      function formatRunDuration(startedAt, completedAt) {
+        const started = new Date(startedAt);
+        const completed = new Date(completedAt);
+        const elapsedMilliseconds = completed.getTime() - started.getTime();
+
+        if (!Number.isFinite(elapsedMilliseconds) || elapsedMilliseconds < 0) {
+          return null;
+        }
+        if (elapsedMilliseconds < 1000) {
+          return 'less than 1 second';
+        }
+
+        const totalSeconds = Math.max(1, Math.round(elapsedMilliseconds / 1000));
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+        const parts = [];
+
+        if (hours > 0) {
+          parts.push(`${hours} hour${hours === 1 ? '' : 's'}`);
+        }
+        if (minutes > 0) {
+          parts.push(`${minutes} minute${minutes === 1 ? '' : 's'}`);
+        }
+        if (seconds > 0 || parts.length === 0) {
+          parts.push(`${seconds} second${seconds === 1 ? '' : 's'}`);
+        }
+
+        return parts.join(' ');
       }
 
       function formatTimestamp(value) {
@@ -1503,6 +1755,125 @@
         }
       }
 
+      function openScanConfirmation() {
+        elements.scanConfirmationView.hidden = false;
+        elements.scanProgressView.hidden = true;
+        elements.scanProgressOverlay.setAttribute(
+          'aria-labelledby',
+          'scanConfirmationTitle',
+        );
+        elements.scanProgressOverlay.setAttribute(
+          'aria-describedby',
+          'scanConfirmationDescription',
+        );
+        document.body.classList.add('scan-running');
+        elements.app.setAttribute('inert', '');
+        elements.scanProgressOverlay.hidden = false;
+        window.requestAnimationFrame(() => elements.cancelScanButton.focus());
+      }
+
+      function closeScanConfirmation() {
+        if (scanInProgress) {
+          return;
+        }
+
+        elements.scanProgressOverlay.hidden = true;
+        elements.app.removeAttribute('inert');
+        document.body.classList.remove('scan-running');
+        elements.runButton.focus();
+      }
+
+      function handleScanModalKeydown(event) {
+        if (scanInProgress) {
+          return;
+        }
+
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          closeScanConfirmation();
+          return;
+        }
+
+        if (event.key !== 'Tab') {
+          return;
+        }
+
+        if (event.shiftKey && document.activeElement === elements.cancelScanButton) {
+          event.preventDefault();
+          elements.confirmScanButton.focus();
+        } else if (
+          !event.shiftKey &&
+          document.activeElement === elements.confirmScanButton
+        ) {
+          event.preventDefault();
+          elements.cancelScanButton.focus();
+        }
+      }
+
+      function showScanProgress() {
+        if (scanElapsedTimer !== null) {
+          window.clearInterval(scanElapsedTimer);
+        }
+
+        scanInProgress = true;
+        scanStartedAt = Date.now();
+        updateScanElapsed();
+        scanElapsedTimer = window.setInterval(updateScanElapsed, 1000);
+        elements.scanConfirmationView.hidden = true;
+        elements.scanProgressView.hidden = false;
+        elements.scanProgressOverlay.setAttribute(
+          'aria-labelledby',
+          'scanProgressTitle',
+        );
+        elements.scanProgressOverlay.setAttribute(
+          'aria-describedby',
+          'scanProgressDescription scanElapsed',
+        );
+        document.body.classList.add('scan-running');
+        elements.app.setAttribute('aria-busy', 'true');
+        elements.app.setAttribute('inert', '');
+        elements.scanProgressOverlay.hidden = false;
+        window.requestAnimationFrame(() => {
+          if (scanInProgress) {
+            elements.scanProgressOverlay.focus();
+          }
+        });
+      }
+
+      function hideScanProgress() {
+        if (scanElapsedTimer !== null) {
+          window.clearInterval(scanElapsedTimer);
+          scanElapsedTimer = null;
+        }
+
+        scanInProgress = false;
+        scanStartedAt = null;
+        elements.scanProgressOverlay.hidden = true;
+        elements.scanConfirmationView.hidden = false;
+        elements.scanProgressView.hidden = true;
+        elements.scanProgressOverlay.setAttribute(
+          'aria-labelledby',
+          'scanConfirmationTitle',
+        );
+        elements.scanProgressOverlay.setAttribute(
+          'aria-describedby',
+          'scanConfirmationDescription',
+        );
+        elements.app.removeAttribute('aria-busy');
+        elements.app.removeAttribute('inert');
+        document.body.classList.remove('scan-running');
+        elements.runButton.focus();
+      }
+
+      function updateScanElapsed() {
+        const elapsedSeconds = scanStartedAt === null
+          ? 0
+          : Math.max(0, Math.floor((Date.now() - scanStartedAt) / 1000));
+        const minutes = Math.floor(elapsedSeconds / 60);
+        const seconds = String(elapsedSeconds % 60).padStart(2, '0');
+        elements.scanElapsed.textContent = `Elapsed time: ${minutes}:${seconds}`;
+      }
+
       function runRetentionNow() {
         clearNotice();
 
@@ -1510,19 +1881,20 @@
           showNotice('Save or discard your settings before running the scan.', 'error');
           return;
         }
-        if (!window.confirm(
-          'Run Gmail retention now? Any currently eligible messages will be moved to Trash.',
-        )) {
-          return;
-        }
 
-        setBusy(true, 'Running…');
+        openScanConfirmation();
+      }
+
+      function beginConfirmedRetentionScan() {
+        setBusy(true, 'Scanning…');
+        showScanProgress();
         showNotice('Retention scan is running. Keep this page open.', 'warning');
         google.script.run
           .withSuccessHandler(response => {
             renderRuntime(response.runtime);
             renderTrigger(response.trigger);
             setBusy(false);
+            hideScanProgress();
             updateDirtyState();
             const result = response.result;
             showNotice(
@@ -1535,6 +1907,7 @@
           })
           .withFailureHandler(error => {
             setBusy(false);
+            hideScanProgress();
             updateDirtyState();
             showNotice(`Retention scan failed: ${getErrorMessage(error)}`, 'error');
             refreshRuntimeOnly();
@@ -1555,7 +1928,14 @@
       function focusFirstInvalidField() {
         const invalid = elements.settingsForm.querySelector('[aria-invalid="true"]');
         if (invalid) {
-          invalid.focus();
+          const containingPanel = invalid.closest('details');
+          if (containingPanel) {
+            containingPanel.open = true;
+          }
+          window.requestAnimationFrame(() => {
+            invalid.focus();
+            invalid.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          });
         }
       }
 
@@ -1564,7 +1944,7 @@
         elements.saveButton.textContent = isBusy && actionText === 'Saving…'
           ? actionText
           : 'Save changes';
-        elements.runButton.textContent = isBusy && actionText === 'Running…'
+        elements.runButton.textContent = isBusy && actionText === 'Scanning…'
           ? actionText
           : 'Run retention scan now';
         updateDirtyState();
