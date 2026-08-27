@@ -5,7 +5,7 @@
 [![GitHub Release Date](https://img.shields.io/github/release-date/dynamiccookies/gmail-retention-manager?style=for-the-badge)](https://github.com/dynamiccookies/gmail-retention-manager/releases/latest)
 [![GitHub Release](https://img.shields.io/github/v/release/dynamiccookies/gmail-retention-manager?style=for-the-badge)](https://github.com/dynamiccookies/gmail-retention-manager/releases/latest)
 
-Automatically move Gmail conversations to Trash after a retention period defined by a Gmail label.
+Automatically move active Gmail messages to Trash after a retention period defined by a Gmail label.
 
 Gmail filters decide **which conversations receive a retention policy**. This Google Apps Script decides **when those conversations expire**. Add, rename, or remove retention labels without modifying the script.
 
@@ -19,7 +19,8 @@ Gmail filters decide **which conversations receive a retention policy**. This Go
 - New replies reset the retention clock for the entire Gmail conversation
 - The longest policy wins when multiple retention labels are present
 - Shorter or equivalent retention labels are automatically removed
-- Expired conversations are moved to Trash, not permanently deleted by the script
+- Active messages in expired conversations are moved to Trash, not permanently deleted by the script
+- Mixed Inbox/Trash conversations are processed without reprocessing messages already in Trash
 - HTML deletion summaries with direct links to the trashed Gmail conversations
 - Automatic cleanup of the script's own notification messages and temporary labels
 - Optional GitHub release checks with update notices in notification emails
@@ -33,11 +34,11 @@ Gmail filters decide **which conversations receive a retention policy**. This Go
 3. The script finds every label beneath the configured root label that contains a valid retention expression.
 4. For each labeled conversation, the script calculates expiration from the newest message date.
 5. When multiple retention labels exist, the policy with the latest actual expiration timestamp wins.
-6. Expired conversations are moved to Gmail Trash.
+6. Active messages in expired conversations are moved to Gmail Trash. Messages already in Trash are skipped.
 7. The script sends a summary email containing the subject, sender, received date, retention policy, and a link to each trashed conversation.
 
 > [!IMPORTANT]
-> Gmail labels and this script operate at the **conversation/thread level**. When one message in a conversation receives a retention label, the policy applies to the entire conversation. A new reply resets the retention clock for the entire conversation.
+> Gmail retention labels operate at the **conversation/thread level**. When one message in a conversation receives a retention label, the policy applies to every active message in the conversation. A new reply resets the retention clock for the entire conversation. Messages already in Trash are skipped without preventing remaining active messages from being processed.
 
 ## Requirements
 
@@ -298,7 +299,7 @@ CHECK_FOR_UPDATES: false,
 | `UPDATE_CHECK_CACHE_SECONDS` | `21600` | GitHub response cache duration, in seconds |
 | `UNIT_ALIASES` | Built-in mapping | Maps readable unit names to canonical units |
 | `THREAD_PAGE_SIZE` | `100` | Number of labeled threads retrieved per Gmail page |
-| `TRASH_BATCH_SIZE` | `100` | Number of conversations moved to Trash per batch |
+| `TRASH_BATCH_SIZE` | `100` | Number of active messages processed per Trash batch |
 | `MAX_ROWS_PER_NOTIFICATION` | `200` | Maximum table rows in each notification email |
 | `LOCK_TIMEOUT_MS` | `5000` | Maximum time to wait for another execution to release the script lock |
 
@@ -400,7 +401,7 @@ The script requires access necessary to:
 
 - Read Gmail labels, conversations, and message metadata
 - Add and remove Gmail labels
-- Move conversations to Trash or Inbox
+- Move messages or conversations to Trash or Inbox
 - Create and send deletion-summary emails to the same account
 - Contact the public GitHub Releases API when update checks are enabled
 - Use Apps Script cache and locking services

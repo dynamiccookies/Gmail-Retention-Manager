@@ -8,7 +8,7 @@
  *
  * PURPOSE
  * -------
- * Automatically moves Gmail conversations to Trash after the retention period
+ * Automatically moves active Gmail messages to Trash after the retention period
  * specified by a Gmail label. Gmail filters decide which conversations receive
  * a retention label; this script only enforces those labels.
  *
@@ -46,7 +46,9 @@
  * IMPORTANT BEHAVIOR
  * ------------------
  * 1. Gmail labels apply to an entire conversation/thread, not one isolated
- *    message. Therefore, this script moves the entire conversation to Trash.
+ *    message. The policy therefore applies to every active message in the
+ *    conversation. Messages already in Trash are skipped rather than causing
+ *    the remaining active messages in the conversation to be skipped.
  *
  * 2. The retention clock starts from the newest message in the conversation.
  *    A new reply resets the clock for the entire conversation.
@@ -173,6 +175,8 @@ const RETENTION_CONFIG = Object.freeze({
 
   // Gmail Apps Script methods are safest when processed in moderate batches.
   THREAD_PAGE_SIZE: 100,
+  // Active messages are moved individually so mixed Inbox/Trash conversations
+  // do not lose their remaining active messages during retention enforcement.
   TRASH_BATCH_SIZE: 100,
 
   // Large deletion runs are split into multiple complete summary messages.
@@ -647,28 +651,41 @@ function enforceGmailRetention() {
     for (const thread of threadMap.values()) {
       verboseLog('THREAD', `Processing thread ${thread.getId()}.`);
       const threadLabels = thread.getLabels();
+      const threadIsInTrash = thread.isInTrash();
       verboseLog('THREAD LABELS', {
         threadId: thread.getId(),
         labels: threadLabels.map(label => label.getName()),
-        isInTrash: thread.isInTrash(),
+        isInTrash: threadIsInTrash,
       });
       const isSystemNotification = threadLabels.some(
         label => labelNamesEqual(label.getName(), getSystemNotificationLabelName()),
       );
 
+      const messages = thread.getMessages();
+      const activeMessages = messages.filter(message => !message.isInTrash());
+      verboseLog('THREAD MESSAGES', {
+        threadId: thread.getId(),
+        messageCount: messages.length,
+        activeMessageCount: activeMessages.length,
+        trashedMessageCount: messages.length - activeMessages.length,
+        subjects: messages.map(message => message.getSubject() || '(no subject)'),
+      });
+
       /*
        * A user may manually trash a generated summary before its configured
        * retention period expires. Clean its temporary labels immediately so it
        * is not rediscovered on every future run and so the internal label can be
-       * deleted when unused.
+       * deleted when unused. Message state is authoritative here because Gmail
+       * can report a mixed Inbox/Trash conversation itself as being in Trash.
        */
-      if (thread.isInTrash()) {
+      if (activeMessages.length === 0) {
         verboseLog('THREAD TRASH STATE', {
           threadId: thread.getId(),
+          threadIsInTrash,
           isSystemNotification,
           action: isSystemNotification
             ? 'Remove temporary notification labels and skip'
-            : 'Skip already-trashed thread',
+            : 'Skip conversation with no active messages',
         });
         if (isSystemNotification) {
           removeSystemNotificationLabels(thread);
@@ -676,14 +693,13 @@ function enforceGmailRetention() {
         continue;
       }
 
-      const messages = thread.getMessages();
-      verboseLog('THREAD MESSAGES', {
-        threadId: thread.getId(),
-        messageCount: messages.length,
-        subjects: messages.map(message => message.getSubject() || '(no subject)'),
-      });
-      if (messages.length === 0) {
-        continue;
+      if (threadIsInTrash) {
+        verboseLog('THREAD TRASH STATE', {
+          threadId: thread.getId(),
+          threadIsInTrash,
+          activeMessageCount: activeMessages.length,
+          action: 'Process active messages in mixed-state conversation',
+        });
       }
 
       const newestMessage = getNewestMessage(messages);
@@ -769,7 +785,7 @@ function enforceGmailRetention() {
        */
       const messageRecords = isSystemNotification
         ? []
-        : messages.map(message => ({
+        : activeMessages.map(message => ({
             subject: message.getSubject() || '(no subject)',
             sender: message.getFrom() || '(unknown sender)',
             receivedAt: message.getDate(),
@@ -779,12 +795,14 @@ function enforceGmailRetention() {
 
       pendingDeletions.push({
         thread,
+        messagesToTrash: activeMessages,
         messageRecords,
         isSystemNotification,
       });
     }
 
-    const deletedMessageRecords = movePendingThreadsToTrash(pendingDeletions);
+    const deletionResult = movePendingMessagesToTrash(pendingDeletions);
+    const deletedMessageRecords = deletionResult.deletedMessageRecords;
 
     // Delete the temporary internal label when no active notification uses it.
     deleteSystemNotificationLabelIfUnused();
@@ -800,7 +818,8 @@ function enforceGmailRetention() {
     console.log(
       [
         `Reviewed ${threadMap.size} conversation(s).`,
-        `Moved ${pendingDeletions.length} conversation(s) to Trash.`,
+        `Moved ${deletionResult.movedMessageCount} active message(s) to Trash ` +
+          `from ${deletionResult.movedThreadCount} conversation(s).`,
         `Reported ${deletedMessageRecords.length} deleted message(s).`,
         `Removed ${removedRetentionLabelCount} redundant retention label(s).`,
       ].join(' '),
@@ -1426,25 +1445,46 @@ function buildNotificationSubject(
 }
 
 /**
- * Moves pending conversations to Trash in batches. Message records are added to
- * the report only after the corresponding batch move succeeds.
+ * Moves pending active messages to Trash in moderate batches. Messages are
+ * moved individually because a conversation may contain both trashed and active
+ * messages. Report records are added only after the corresponding move succeeds.
  *
- * @param {Array} pendingDeletions Threads and their report data.
- * @return {Array} Message-level rows for successfully trashed ordinary threads.
+ * @param {Array} pendingDeletions Threads, active messages, and report data.
+ * @return {{deletedMessageRecords: Array, movedMessageCount: number,
+ *   movedThreadCount: number}} Successful deletion details.
  */
-function movePendingThreadsToTrash(pendingDeletions) {
+function movePendingMessagesToTrash(pendingDeletions) {
+  const pendingMessages = [];
+
+  for (const item of pendingDeletions) {
+    item.messagesToTrash.forEach((message, messageIndex) => {
+      pendingMessages.push({
+        message,
+        messageRecord: item.isSystemNotification
+          ? null
+          : item.messageRecords[messageIndex],
+        thread: item.thread,
+        isSystemNotification: item.isSystemNotification,
+      });
+    });
+  }
+
   verboseLog('TRASH', {
     pendingThreadCount: pendingDeletions.length,
+    pendingMessageCount: pendingMessages.length,
     threadIds: pendingDeletions.map(item => item.thread.getId()),
   });
   const deletedMessageRecords = [];
+  const movedThreadIds = new Set();
+  const systemNotificationThreads = new Map();
+  let movedMessageCount = 0;
 
   for (
     let index = 0;
-    index < pendingDeletions.length;
+    index < pendingMessages.length;
     index += RETENTION_CONFIG.TRASH_BATCH_SIZE
   ) {
-    const batch = pendingDeletions.slice(
+    const batch = pendingMessages.slice(
       index,
       index + RETENTION_CONFIG.TRASH_BATCH_SIZE,
     );
@@ -1452,23 +1492,47 @@ function movePendingThreadsToTrash(pendingDeletions) {
     verboseLog('TRASH BATCH', {
       batchStartIndex: index,
       batchSize: batch.length,
-      threadIds: batch.map(item => item.thread.getId()),
+      messageIds: batch.map(item => item.message.getId()),
+      threadIds: [...new Set(batch.map(item => item.thread.getId()))],
     });
-    GmailApp.moveThreadsToTrash(batch.map(item => item.thread));
-    verboseLog('TRASH BATCH', 'GmailApp.moveThreadsToTrash() completed.');
 
     for (const item of batch) {
+      // Recheck immediately before the move in case the user manually trashed
+      // the message after collection but before this batch was processed.
+      if (item.message.isInTrash()) {
+        verboseLog('TRASH MESSAGE SKIP', {
+          messageId: item.message.getId(),
+          threadId: item.thread.getId(),
+          reason: 'Message is already in Trash',
+        });
+        continue;
+      }
+
+      item.message.moveToTrash();
+      movedMessageCount += 1;
+      movedThreadIds.add(item.thread.getId());
+
       if (item.isSystemNotification) {
-        // Internal notifications are deliberately silent and leave no temporary
-        // operational labels behind after they reach Trash.
-        removeSystemNotificationLabels(item.thread);
-      } else {
-        deletedMessageRecords.push(...item.messageRecords);
+        systemNotificationThreads.set(item.thread.getId(), item.thread);
+      } else if (item.messageRecord) {
+        deletedMessageRecords.push(item.messageRecord);
       }
     }
+
+    verboseLog('TRASH BATCH', 'Individual message moves completed.');
   }
 
-  return deletedMessageRecords;
+  for (const thread of systemNotificationThreads.values()) {
+    // Internal notifications are deliberately silent and leave no temporary
+    // operational labels behind after their active messages reach Trash.
+    removeSystemNotificationLabels(thread);
+  }
+
+  return {
+    deletedMessageRecords,
+    movedMessageCount,
+    movedThreadCount: movedThreadIds.size,
+  };
 }
 
 
