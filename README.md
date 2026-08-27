@@ -1,7 +1,7 @@
 # Gmail Retention Manager
 
 [![GitHub License](https://img.shields.io/github/license/dynamiccookies/gmail-retention-manager?style=for-the-badge)](https://github.com/dynamiccookies/gmail-retention-manager/blob/main/LICENSE)
-[![GitHub File Size](https://img.shields.io/github/size/dynamiccookies/gmail-retention-manager/gmail-retention-manager.js?style=for-the-badge)](https://github.com/dynamiccookies/gmail-retention-manager/blob/main/gmail-retention-manager.js)
+[![GitHub File Size](https://img.shields.io/github/size/dynamiccookies/gmail-retention-manager/gmail-retention-manager.gs?style=for-the-badge)](https://github.com/dynamiccookies/gmail-retention-manager/blob/main/gmail-retention-manager.gs)
 [![GitHub Release Date](https://img.shields.io/github/release-date/dynamiccookies/gmail-retention-manager?style=for-the-badge)](https://github.com/dynamiccookies/gmail-retention-manager/releases/latest)
 [![GitHub Release](https://img.shields.io/github/v/release/dynamiccookies/gmail-retention-manager?style=for-the-badge)](https://github.com/dynamiccookies/gmail-retention-manager/releases/latest)
 
@@ -49,7 +49,7 @@ Gmail filters decide **which conversations receive a retention policy**. This Go
 
 ### 1. Download the script
 
-Download the latest `gmail-retention-manager.js` file from the [latest release](https://github.com/dynamiccookies/gmail-retention-manager/releases/latest).
+Download the latest `gmail-retention-manager.gs` file from the [latest release](https://github.com/dynamiccookies/gmail-retention-manager/releases/latest).
 
 ### 2. Create a Google Apps Script project
 
@@ -57,10 +57,10 @@ Download the latest `gmail-retention-manager.js` file from the [latest release](
 2. Select **New project**.
 3. Rename the project to something recognizable, such as `Gmail Retention Manager`.
 4. Delete the sample `myFunction()` code from `Code.gs`.
-5. Paste the full contents of the downloaded `gmail-retention-manager.js` file into the Apps Script editor.
+5. Paste the full contents of the downloaded `gmail-retention-manager.gs` file into the Apps Script editor.
 6. Save the project.
 
-The repository uses a `.js` extension so the source is easy to view on GitHub. Google Apps Script stores editor files with a `.gs` extension, so you can leave the project file named `Code.gs` or rename it to `gmail-retention-manager.gs`. The filename does not affect execution.
+The repository uses the native Google Apps Script `.gs` extension. You can leave the project file named `Code.gs` or rename it to `gmail-retention-manager.gs`; the filename does not affect execution.
 
 ### 3. Review the configuration
 
@@ -431,7 +431,7 @@ Uninstalling the script does not restore conversations already in Trash.
 
 ## Updating
 
-1. Download the newest `gmail-retention-manager.js` file from the [latest release](https://github.com/dynamiccookies/gmail-retention-manager/releases/latest).
+1. Download the newest `gmail-retention-manager.gs` file from the [latest release](https://github.com/dynamiccookies/gmail-retention-manager/releases/latest).
 2. Replace the entire existing script in Apps Script.
 3. Save the project.
 4. Confirm that the `VERSION` value matches the downloaded release.
