@@ -109,7 +109,7 @@
  *
  * VERBOSE DIAGNOSTICS
  * -------------------
- * Set RETENTION_CONFIG.VERBOSE_LOGGING to true, save the project, and run
+ * Set the saved VERBOSE_LOGGING setting to true and run
  * diagnoseGmailRetentionLabels() to troubleshoot label creation without
  * processing any mail. The log records raw and normalized label names, direct
  * and scanned lookup results, createLabel() calls, verification retries, parsed
@@ -125,7 +125,12 @@
  * - Create Gmail filters that apply labels such as Retention/7d or Retention/1m.
  */
 
-const RETENTION_CONFIG = Object.freeze({
+/*
+ * Factory defaults are copied into Script Properties on the first run. They are
+ * never used in place of an existing saved configuration, so source updates do
+ * not overwrite a user's active settings.
+ */
+const RETENTION_FACTORY_DEFAULTS = Object.freeze({
   /*
    * Set to true while diagnosing installation or label-processing problems.
    * Verbose mode logs nearly every material decision, including raw Gmail label
@@ -153,6 +158,21 @@ const RETENTION_CONFIG = Object.freeze({
 
   // Check the latest published GitHub release when sending a deletion summary.
   CHECK_FOR_UPDATES: true,
+});
+
+/*
+ * Active settings are stored as one versioned JSON object under this property.
+ * Keeping the schema version independent from the application version allows
+ * settings migrations without tying them to a particular software release.
+ */
+const RETENTION_SETTINGS_PROPERTY_KEY = 'GMAIL_RETENTION_CONFIG';
+const RETENTION_SETTINGS_SCHEMA_VERSION = 1;
+
+/*
+ * These values control application behavior but are not user preferences. They
+ * remain immutable source-code constants and are replaced during an update.
+ */
+const RETENTION_CONFIG = Object.freeze({
 
   // Displayed in notification footers and linked to the matching GitHub release.
   VERSION: '0.5.0',
@@ -186,6 +206,369 @@ const RETENTION_CONFIG = Object.freeze({
   LOCK_TIMEOUT_MS: 5000,
 });
 
+/* Cached only for the current Apps Script execution. */
+let retentionSettingsCache = null;
+
+/** @return {Object} A mutable copy of the immutable factory defaults. */
+function copyFactoryRetentionSettings() {
+  return {
+    ...RETENTION_FACTORY_DEFAULTS,
+    DEFAULT_RETENTION_LABEL_SUFFIXES: [
+      ...RETENTION_FACTORY_DEFAULTS.DEFAULT_RETENTION_LABEL_SUFFIXES,
+    ],
+  };
+}
+
+/**
+ * Returns a detached copy so callers cannot mutate the execution cache.
+ *
+ * @param {Object} settings Validated retention settings.
+ * @return {Object} Mutable detached settings.
+ */
+function copyRetentionSettings(settings) {
+  return {
+    ...settings,
+    DEFAULT_RETENTION_LABEL_SUFFIXES: [
+      ...settings.DEFAULT_RETENTION_LABEL_SUFFIXES,
+    ],
+  };
+}
+
+/**
+ * Freezes the settings cached during one execution.
+ *
+ * @param {Object} settings Validated retention settings.
+ * @return {Object} Immutable settings.
+ */
+function freezeRetentionSettings(settings) {
+  return Object.freeze({
+    ...settings,
+    DEFAULT_RETENTION_LABEL_SUFFIXES: Object.freeze([
+      ...settings.DEFAULT_RETENTION_LABEL_SUFFIXES,
+    ]),
+  });
+}
+
+/** @return {boolean} Whether a value is a plain configuration object. */
+function isConfigurationObject(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+/**
+ * Normalizes and validates a Gmail label path or managed child-label suffix.
+ *
+ * @param {*} value Candidate value.
+ * @param {string} settingName Configuration field name.
+ * @return {string} Normalized nonempty path.
+ */
+function validateLabelPathSetting(value, settingName) {
+  if (typeof value !== 'string') {
+    throw new Error(`${settingName} must be a string.`);
+  }
+
+  const normalized = normalizeRetentionLabelName(value)
+    .replace(/^\/+|\/+$/g, '');
+
+  if (!normalized || normalized.split('/').some(segment => !segment.trim())) {
+    throw new Error(`${settingName} must contain a valid Gmail label name.`);
+  }
+
+  return normalized;
+}
+
+/**
+ * Normalizes and validates a supported retention-duration suffix.
+ *
+ * @param {*} value Candidate suffix such as "1d" or "2 weeks".
+ * @param {string} settingName Configuration field name.
+ * @return {string} Normalized suffix.
+ */
+function validateRetentionDurationSetting(value, settingName) {
+  if (typeof value !== 'string') {
+    throw new Error(`${settingName} must be a string.`);
+  }
+
+  const normalized = normalizeRetentionLabelName(value);
+  const match = normalized.match(/^(\d+)\s*([a-z]+)$/i);
+  const amount = match ? Number(match[1]) : NaN;
+  const unitAlias = match ? match[2].toLowerCase() : '';
+
+  if (
+    !match ||
+    !Number.isSafeInteger(amount) ||
+    amount <= 0 ||
+    !RETENTION_CONFIG.UNIT_ALIASES[unitAlias]
+  ) {
+    throw new Error(
+      `${settingName} must be a positive supported retention duration.`,
+    );
+  }
+
+  return normalized;
+}
+
+/**
+ * Validates every user-editable setting and returns a normalized copy.
+ * Invalid stored data is rejected rather than silently replaced with defaults.
+ *
+ * @param {*} settings Candidate settings object.
+ * @return {Object} Validated and normalized settings.
+ */
+function validateRetentionSettings(settings) {
+  if (!isConfigurationObject(settings)) {
+    throw new Error('settings must be an object.');
+  }
+
+  const expectedKeys = Object.keys(RETENTION_FACTORY_DEFAULTS);
+  const missingKeys = expectedKeys.filter(
+    key => !Object.prototype.hasOwnProperty.call(settings, key),
+  );
+  const unknownKeys = Object.keys(settings).filter(
+    key => !Object.prototype.hasOwnProperty.call(RETENTION_FACTORY_DEFAULTS, key),
+  );
+
+  if (missingKeys.length > 0) {
+    throw new Error(`settings is missing: ${missingKeys.join(', ')}.`);
+  }
+  if (unknownKeys.length > 0) {
+    throw new Error(`settings contains unknown fields: ${unknownKeys.join(', ')}.`);
+  }
+  if (typeof settings.VERBOSE_LOGGING !== 'boolean') {
+    throw new Error('VERBOSE_LOGGING must be true or false.');
+  }
+  if (typeof settings.CHECK_FOR_UPDATES !== 'boolean') {
+    throw new Error('CHECK_FOR_UPDATES must be true or false.');
+  }
+  if (!Array.isArray(settings.DEFAULT_RETENTION_LABEL_SUFFIXES)) {
+    throw new Error('DEFAULT_RETENTION_LABEL_SUFFIXES must be an array.');
+  }
+  if (typeof settings.NOTIFICATION_SUBJECT_PREFIX !== 'string') {
+    throw new Error('NOTIFICATION_SUBJECT_PREFIX must be a string.');
+  }
+
+  const rootLabel = validateLabelPathSetting(
+    settings.ROOT_LABEL,
+    'ROOT_LABEL',
+  );
+  const defaultSuffixes = settings.DEFAULT_RETENTION_LABEL_SUFFIXES.map(
+    (suffix, index) => validateRetentionDurationSetting(
+      suffix,
+      `DEFAULT_RETENTION_LABEL_SUFFIXES[${index}]`,
+    ),
+  );
+  const duplicateSuffixes = defaultSuffixes.filter(
+    (suffix, index) => defaultSuffixes.findIndex(
+      candidate => candidate.toLowerCase() === suffix.toLowerCase(),
+    ) !== index,
+  );
+
+  if (duplicateSuffixes.length > 0) {
+    throw new Error('DEFAULT_RETENTION_LABEL_SUFFIXES cannot contain duplicates.');
+  }
+
+  const notificationRetentionSuffix = validateRetentionDurationSetting(
+    settings.NOTIFICATION_RETENTION_LABEL_SUFFIX,
+    'NOTIFICATION_RETENTION_LABEL_SUFFIX',
+  );
+  const systemNotificationSuffix = validateLabelPathSetting(
+    settings.SYSTEM_NOTIFICATION_LABEL_SUFFIX,
+    'SYSTEM_NOTIFICATION_LABEL_SUFFIX',
+  );
+
+  if (/^\d+\s*[a-z]+$/i.test(systemNotificationSuffix)) {
+    const match = systemNotificationSuffix.match(/^(\d+)\s*([a-z]+)$/i);
+    if (match && RETENTION_CONFIG.UNIT_ALIASES[match[2].toLowerCase()]) {
+      throw new Error(
+        'SYSTEM_NOTIFICATION_LABEL_SUFFIX cannot also be a retention duration.',
+      );
+    }
+  }
+
+  return {
+    VERBOSE_LOGGING: settings.VERBOSE_LOGGING,
+    ROOT_LABEL: rootLabel,
+    DEFAULT_RETENTION_LABEL_SUFFIXES: defaultSuffixes,
+    NOTIFICATION_SUBJECT_PREFIX: settings.NOTIFICATION_SUBJECT_PREFIX.trim(),
+    NOTIFICATION_RETENTION_LABEL_SUFFIX: notificationRetentionSuffix,
+    SYSTEM_NOTIFICATION_LABEL_SUFFIX: systemNotificationSuffix,
+    CHECK_FOR_UPDATES: settings.CHECK_FOR_UPDATES,
+  };
+}
+
+/**
+ * Extracts known setting fields from a schema-zero configuration. Schema zero
+ * represents an early flat object or an object with an unversioned settings key.
+ *
+ * @param {Object} source Legacy settings.
+ * @return {Object} Known setting fields only.
+ */
+function extractLegacyRetentionSettings(source) {
+  const extracted = {};
+
+  for (const key of Object.keys(RETENTION_FACTORY_DEFAULTS)) {
+    extracted[key] = source[key];
+  }
+
+  return extracted;
+}
+
+/**
+ * Migrates a stored configuration to the current independent schema version.
+ * Each future schema must add an explicit migration step before the version is
+ * incremented; configurations created by newer code are never downgraded.
+ *
+ * @param {*} storedConfiguration Parsed Script Property value.
+ * @return {{configuration: Object, migrated: boolean}} Current configuration.
+ */
+function migrateRetentionConfiguration(storedConfiguration) {
+  if (!isConfigurationObject(storedConfiguration)) {
+    throw new Error('the stored configuration must be an object.');
+  }
+
+  let configuration = storedConfiguration;
+  let schemaVersion = configuration.schemaVersion;
+  let migrated = false;
+
+  if (schemaVersion === undefined) {
+    schemaVersion = 0;
+  }
+  if (!Number.isInteger(schemaVersion) || schemaVersion < 0) {
+    throw new Error('schemaVersion must be a nonnegative integer.');
+  }
+  if (schemaVersion > RETENTION_SETTINGS_SCHEMA_VERSION) {
+    throw new Error(
+      `schemaVersion ${schemaVersion} requires a newer application version.`,
+    );
+  }
+
+  while (schemaVersion < RETENTION_SETTINGS_SCHEMA_VERSION) {
+    switch (schemaVersion) {
+      case 0: {
+        const legacySettings = isConfigurationObject(configuration.settings)
+          ? configuration.settings
+          : configuration;
+        configuration = {
+          schemaVersion: 1,
+          settings: extractLegacyRetentionSettings(legacySettings),
+        };
+        schemaVersion = 1;
+        migrated = true;
+        break;
+      }
+      default:
+        throw new Error(`no migration exists for schemaVersion ${schemaVersion}.`);
+    }
+  }
+
+  if (!isConfigurationObject(configuration.settings)) {
+    throw new Error('the stored configuration must contain a settings object.');
+  }
+
+  return { configuration, migrated };
+}
+
+/**
+ * Writes a validated versioned configuration to Script Properties.
+ *
+ * @param {Object} settings Candidate active settings.
+ * @return {Object} Detached validated settings.
+ */
+function saveRetentionSettings(settings) {
+  const validatedSettings = validateRetentionSettings(settings);
+  const storedConfiguration = {
+    schemaVersion: RETENTION_SETTINGS_SCHEMA_VERSION,
+    settings: copyRetentionSettings(validatedSettings),
+  };
+
+  PropertiesService.getScriptProperties().setProperty(
+    RETENTION_SETTINGS_PROPERTY_KEY,
+    JSON.stringify(storedConfiguration),
+  );
+  retentionSettingsCache = freezeRetentionSettings(validatedSettings);
+
+  return copyRetentionSettings(retentionSettingsCache);
+}
+
+/**
+ * Loads active settings, initializes a missing property from factory defaults,
+ * and persists successful schema migrations. Corrupt values are never reset or
+ * overwritten automatically.
+ *
+ * @return {Object} Immutable active settings for the current execution.
+ */
+function getRetentionSettings() {
+  if (retentionSettingsCache) {
+    return retentionSettingsCache;
+  }
+
+  const scriptProperties = PropertiesService.getScriptProperties();
+  const storedValue = scriptProperties.getProperty(
+    RETENTION_SETTINGS_PROPERTY_KEY,
+  );
+
+  if (storedValue === null) {
+    const factorySettings = validateRetentionSettings(
+      copyFactoryRetentionSettings(),
+    );
+    saveRetentionSettings(factorySettings);
+    console.log(
+      `Initialized ${RETENTION_SETTINGS_PROPERTY_KEY} from factory defaults.`,
+    );
+    return retentionSettingsCache;
+  }
+
+  let parsedConfiguration;
+  try {
+    parsedConfiguration = JSON.parse(storedValue);
+  } catch (error) {
+    throw new Error(
+      `Invalid ${RETENTION_SETTINGS_PROPERTY_KEY}: the stored value is not ` +
+      `valid JSON (${error.message}). No Gmail changes were made.`,
+    );
+  }
+
+  try {
+    const migration = migrateRetentionConfiguration(parsedConfiguration);
+    const validatedSettings = validateRetentionSettings(
+      migration.configuration.settings,
+    );
+    retentionSettingsCache = freezeRetentionSettings(validatedSettings);
+
+    if (migration.migrated) {
+      scriptProperties.setProperty(
+        RETENTION_SETTINGS_PROPERTY_KEY,
+        JSON.stringify({
+          schemaVersion: RETENTION_SETTINGS_SCHEMA_VERSION,
+          settings: copyRetentionSettings(validatedSettings),
+        }),
+      );
+      console.log(
+        `Migrated ${RETENTION_SETTINGS_PROPERTY_KEY} to schema ` +
+          `${RETENTION_SETTINGS_SCHEMA_VERSION}.`,
+      );
+    }
+
+    return retentionSettingsCache;
+  } catch (error) {
+    throw new Error(
+      `Invalid ${RETENTION_SETTINGS_PROPERTY_KEY}: ${error.message} ` +
+      'The saved value was not changed and no Gmail changes were made.',
+    );
+  }
+}
+
+/**
+ * Returns the versioned active configuration for the future admin interface.
+ *
+ * @return {{schemaVersion: number, settings: Object}} Detached configuration.
+ */
+function getRetentionConfiguration() {
+  return {
+    schemaVersion: RETENTION_SETTINGS_SCHEMA_VERSION,
+    settings: copyRetentionSettings(getRetentionSettings()),
+  };
+}
+
 /**
  * Returns the normalized configured root label and rejects an empty value.
  * The root may itself be nested, such as "Automation/Retention".
@@ -193,11 +576,11 @@ const RETENTION_CONFIG = Object.freeze({
  * @return {string} Normalized root-label path.
  */
 function getRootLabelName() {
-  const rootLabel = normalizeRetentionLabelName(RETENTION_CONFIG.ROOT_LABEL)
+  const rootLabel = normalizeRetentionLabelName(getRetentionSettings().ROOT_LABEL)
     .replace(/^\/+|\/+$/g, '');
 
   if (!rootLabel) {
-    throw new Error('RETENTION_CONFIG.ROOT_LABEL cannot be empty.');
+    throw new Error('ROOT_LABEL cannot be empty.');
   }
 
   return rootLabel;
@@ -222,7 +605,7 @@ function buildManagedLabelName(childName) {
 
 /** @return {string[]} Full starter retention-label paths. */
 function getDefaultRetentionLabelNames() {
-  return RETENTION_CONFIG.DEFAULT_RETENTION_LABEL_SUFFIXES.map(
+  return getRetentionSettings().DEFAULT_RETENTION_LABEL_SUFFIXES.map(
     suffix => buildManagedLabelName(suffix),
   );
 }
@@ -230,13 +613,15 @@ function getDefaultRetentionLabelNames() {
 /** @return {string} Full retention label applied to summary notifications. */
 function getNotificationRetentionLabelName() {
   return buildManagedLabelName(
-    RETENTION_CONFIG.NOTIFICATION_RETENTION_LABEL_SUFFIX,
+    getRetentionSettings().NOTIFICATION_RETENTION_LABEL_SUFFIX,
   );
 }
 
 /** @return {string} Full temporary system-notification label path. */
 function getSystemNotificationLabelName() {
-  return buildManagedLabelName(RETENTION_CONFIG.SYSTEM_NOTIFICATION_LABEL_SUFFIX);
+  return buildManagedLabelName(
+    getRetentionSettings().SYSTEM_NOTIFICATION_LABEL_SUFFIX,
+  );
 }
 
 /**
@@ -412,7 +797,7 @@ function compareSemanticVersions(first, second) {
  * @return {{version: string, tagName: string, releaseUrl: string}|null}
  */
 function getLatestPublishedRelease() {
-  if (!RETENTION_CONFIG.CHECK_FOR_UPDATES) {
+  if (!getRetentionSettings().CHECK_FOR_UPDATES) {
     verboseLog('UPDATE CHECK', 'Disabled by configuration.');
     return null;
   }
@@ -569,6 +954,7 @@ function escapeRegExp(value) {
  * Main entry point. Configure a daily time-driven trigger for this function.
  */
 function enforceGmailRetention() {
+  const settings = getRetentionSettings();
   verboseLog('MAIN', 'enforceGmailRetention() entered.');
   const lock = LockService.getScriptLock();
   verboseLog('LOCK', `Attempting script lock for ${RETENTION_CONFIG.LOCK_TIMEOUT_MS} ms.`);
@@ -590,7 +976,7 @@ function enforceGmailRetention() {
       scriptTimeZone: Session.getScriptTimeZone(),
       now: now.toISOString(),
       config: {
-        rootLabel: RETENTION_CONFIG.ROOT_LABEL,
+        rootLabel: settings.ROOT_LABEL,
         defaultRetentionLabels: getDefaultRetentionLabelNames(),
         notificationRetentionLabel:
           getNotificationRetentionLabelName(),
@@ -1440,7 +1826,7 @@ function buildNotificationSubject(
     ? ` — part ${partNumber} of ${totalParts}`
     : '';
 
-  return `${RETENTION_CONFIG.NOTIFICATION_SUBJECT_PREFIX} ` +
+  return `${getRetentionSettings().NOTIFICATION_SUBJECT_PREFIX} ` +
     `${formatMessageCount(totalMessageCount)} deleted${partSuffix}`;
 }
 
@@ -2005,7 +2391,7 @@ function chunkArray(items, size) {
  * @param {*} details Message or structured diagnostic details.
  */
 function verboseLog(step, details) {
-  if (!RETENTION_CONFIG.VERBOSE_LOGGING) {
+  if (!getRetentionSettings().VERBOSE_LOGGING) {
     return;
   }
 
@@ -2031,7 +2417,7 @@ function verboseLog(step, details) {
  * @param {string} step Snapshot label used in the execution log.
  */
 function verboseLabelSnapshot(step) {
-  if (!RETENTION_CONFIG.VERBOSE_LOGGING) {
+  if (!getRetentionSettings().VERBOSE_LOGGING) {
     return;
   }
 
