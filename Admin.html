@@ -105,7 +105,8 @@
       }
 
       button,
-      input {
+      input,
+      select {
         font: inherit;
       }
 
@@ -115,7 +116,8 @@
       }
 
       button:disabled,
-      input:disabled {
+      input:disabled,
+      select:disabled {
         cursor: not-allowed;
         opacity: 0.6;
       }
@@ -245,11 +247,6 @@
         color: var(--danger);
       }
 
-      .status-neutral {
-        background: var(--neutral-soft);
-        color: var(--neutral-text);
-      }
-
       .notice {
         margin-bottom: 18px;
         padding: 13px 15px;
@@ -314,6 +311,10 @@
 
       .card-detail {
         font-size: 13px;
+      }
+
+      .schedule-detail-line {
+        display: block;
       }
 
       .run-panel {
@@ -411,7 +412,9 @@
         font-weight: 700;
       }
 
-      .field input[type="text"] {
+      .field input[type="text"],
+      .field input[type="time"],
+      .field select {
         width: 100%;
         min-height: 44px;
         padding: 10px 12px;
@@ -422,12 +425,15 @@
         outline: none;
       }
 
-      .field input[type="text"]:focus {
+      .field input[type="text"]:focus,
+      .field input[type="time"]:focus,
+      .field select:focus {
         border-color: var(--primary);
         box-shadow: 0 0 0 3px var(--focus-ring);
       }
 
-      .field input[aria-invalid="true"] {
+      .field input[aria-invalid="true"],
+      .field select[aria-invalid="true"] {
         border-color: var(--danger);
       }
 
@@ -629,6 +635,24 @@
         width: 18px;
         height: 18px;
         margin: 1px 0 0;
+      }
+
+      .schedule-form-actions {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: 20px;
+        padding-top: 18px;
+        border-top: 1px solid var(--border);
+      }
+
+      .schedule-form-actions .unsaved {
+        margin-right: auto;
+      }
+
+      .schedule-guidance {
+        margin-top: 18px;
       }
 
       .actions {
@@ -867,12 +891,18 @@
           padding: 12px 16px;
         }
 
-        .unsaved {
+        .schedule-form-actions {
+          flex-wrap: wrap;
+        }
+
+        .actions .unsaved,
+        .schedule-form-actions .unsaved {
           width: 100%;
           margin: 0;
         }
 
-        .actions .button {
+        .actions .button,
+        .schedule-form-actions .button {
           flex: 1;
         }
 
@@ -1018,6 +1048,126 @@
           Run retention scan now
         </button>
       </section>
+
+      <details class="panel collapsible-panel" id="scheduleSettingsPanel">
+        <summary class="panel-header">
+          <div>
+            <h2>Schedule settings</h2>
+            <p>Control when Gmail Retention Manager scans for eligible messages.</p>
+          </div>
+        </summary>
+
+        <form id="scheduleForm" novalidate>
+          <div class="panel-body">
+            <div class="switch-row">
+              <div class="switch-copy">
+                <label class="switch-label" for="scheduleEnabled">
+                  Scheduled scans
+                </label>
+                <p class="help">
+                  Turning this off removes the managed trigger but preserves the
+                  selected schedule for later. Manual scans remain available.
+                </p>
+              </div>
+              <label class="switch" aria-label="Scheduled scans">
+                <input id="scheduleEnabled" type="checkbox">
+                <span class="switch-track"></span>
+              </label>
+            </div>
+
+            <div class="form-grid" style="margin-top:18px;">
+              <div class="field">
+                <label for="scheduleFrequency">Scan frequency</label>
+                <select id="scheduleFrequency" name="scheduleFrequency"></select>
+                <p class="help">
+                  Daily is recommended. Short retention labels become eligible
+                  sooner but are still processed during the next scan.
+                </p>
+                <p class="field-error" id="scheduleFrequencyError"></p>
+              </div>
+
+              <div class="field" id="scheduleDailyTimeField">
+                <label for="scheduleDailyTime">Run around</label>
+                <input
+                  id="scheduleDailyTime"
+                  name="scheduleDailyTime"
+                  type="time"
+                  step="900"
+                >
+                <p class="help">
+                  Google schedules time-driven triggers approximately, generally
+                  within about 15 minutes of the selected time.
+                </p>
+                <p class="field-error" id="scheduleDailyTimeError"></p>
+              </div>
+
+              <div class="field field-full" id="scheduleTimeZoneField">
+                <label for="scheduleTimeZone">Time zone</label>
+                <select
+                  id="scheduleTimeZone"
+                  name="scheduleTimeZone"
+                ></select>
+                <p class="help">
+                  Used for the daily trigger, dashboard timestamps, and summary
+                  email timestamps. Select a supported time zone from the list.
+                </p>
+                <p class="field-error" id="scheduleTimeZoneError"></p>
+              </div>
+            </div>
+
+            <div
+              class="warning-box schedule-guidance"
+              id="scheduleFrequencyWarning"
+              hidden
+            ></div>
+
+            <div
+              class="warning-box schedule-guidance"
+              id="scheduleStatusWarning"
+              hidden
+            >
+              <span id="scheduleStatusWarningText"></span>
+              <label id="scheduleReplaceAcknowledgementRow" hidden>
+                <input id="scheduleReplaceAcknowledgement" type="checkbox">
+                <span>
+                  I understand the existing retention trigger(s) will be replaced
+                  or removed.
+                </span>
+              </label>
+            </div>
+
+            <div class="schedule-form-actions">
+              <span class="unsaved" id="scheduleUnsavedText" hidden>
+                Unsaved schedule changes
+              </span>
+              <button
+                class="button button-secondary"
+                id="scheduleResetButton"
+                type="button"
+                disabled
+              >
+                Reset
+              </button>
+              <button
+                class="button button-secondary"
+                id="scheduleRepairButton"
+                type="button"
+                hidden
+              >
+                Repair schedule
+              </button>
+              <button
+                class="button button-primary"
+                id="scheduleSaveButton"
+                type="submit"
+                disabled
+              >
+                Save schedule
+              </button>
+            </div>
+          </div>
+        </form>
+      </details>
 
       <form id="settingsForm" novalidate>
         <details class="panel collapsible-panel" id="retentionSettingsPanel">
@@ -1200,9 +1350,13 @@
 
       const elements = {};
       let initialSettings = null;
+      let initialSchedulePreferences = null;
+      let currentTrigger = null;
       let applicationData = null;
       let busy = false;
       let dirty = false;
+      let scheduleBusy = false;
+      let scheduleDirty = false;
       let persistedTheme = 'dark';
       let pendingTheme = null;
       let themeSaveTimer = null;
@@ -1219,6 +1373,16 @@
           'cancelScanButton', 'confirmScanButton', 'scanElapsed',
           'ownerText', 'versionPill', 'globalNotice', 'verboseNotice',
           'statusPill', 'statusDetail', 'scheduleValue', 'scheduleDetail',
+          'scheduleSettingsPanel', 'scheduleForm', 'scheduleEnabled',
+          'scheduleFrequency', 'scheduleFrequencyError',
+          'scheduleDailyTimeField', 'scheduleDailyTime',
+          'scheduleDailyTimeError', 'scheduleTimeZoneField',
+          'scheduleTimeZone',
+          'scheduleTimeZoneError', 'scheduleFrequencyWarning',
+          'scheduleStatusWarning', 'scheduleStatusWarningText',
+          'scheduleReplaceAcknowledgementRow',
+          'scheduleReplaceAcknowledgement', 'scheduleUnsavedText',
+          'scheduleResetButton', 'scheduleRepairButton', 'scheduleSaveButton',
           'lastSuccessValue', 'lastSuccessDetail', 'lastErrorValue',
           'lastErrorDetail', 'runButton', 'runHelp', 'settingsForm',
           'rootLabel', 'rootLabelError', 'rootLabelWarning',
@@ -1244,12 +1408,17 @@
           'keydown',
           handleScanModalKeydown,
         );
+        elements.scheduleForm.addEventListener('submit', saveSchedule);
+        elements.scheduleForm.addEventListener('input', handleScheduleChange);
+        elements.scheduleForm.addEventListener('change', handleScheduleChange);
+        elements.scheduleResetButton.addEventListener('click', resetScheduleForm);
+        elements.scheduleRepairButton.addEventListener('click', repairSchedule);
         elements.discardButton.addEventListener('click', discardChanges);
         elements.settingsForm.addEventListener('submit', saveSettings);
         elements.settingsForm.addEventListener('input', handleFormChange);
         elements.settingsForm.addEventListener('change', handleFormChange);
         window.addEventListener('beforeunload', event => {
-          if (!dirty && !scanInProgress) {
+          if (!dirty && !scheduleDirty && !scanInProgress) {
             return;
           }
           event.preventDefault();
@@ -1361,6 +1530,7 @@
         renderSettings(data.settings);
         renderRuntime(data.runtime);
         renderTrigger(data.trigger);
+        renderScheduleForm(data.trigger);
         updateDirtyState();
       }
 
@@ -1394,12 +1564,454 @@
 
         setStatusPill(elements.statusPill, label, statusClass);
         elements.statusDetail.textContent = trigger.summary;
+        elements.scheduleDetail.textContent = '';
+
+        const frequency = getScheduleFrequencyOption(
+          trigger,
+          trigger.preferences.frequency,
+        );
+        const dailyLine = formatDailyScheduleLine(trigger.preferences);
+
+        if (trigger.state === 'managed') {
+          elements.scheduleValue.textContent = frequency.label;
+          appendScheduleDetailLine(
+            trigger.preferences.frequency === 'daily'
+              ? dailyLine
+              : `Approximately ${frequency.runsPerDay} runs per day`,
+          );
+          appendScheduleDetailLine('Managed by Retention Manager');
+          return;
+        }
+
+        if (trigger.state === 'disabled') {
+          elements.scheduleValue.textContent = 'Disabled';
+          appendScheduleDetailLine(
+            trigger.preferences.frequency === 'daily'
+              ? `Saved: ${frequency.label} · ${dailyLine}`
+              : `Saved: ${frequency.label}`,
+          );
+          appendScheduleDetailLine('Managed by Retention Manager');
+          return;
+        }
+
+        if (trigger.state === 'setup') {
+          elements.scheduleValue.textContent = 'Not configured';
+          appendScheduleDetailLine(
+            `Default: ${frequency.label} · ${dailyLine}`,
+          );
+          appendScheduleDetailLine('Enable it in Schedule settings');
+          return;
+        }
+
+        if (trigger.state === 'unmanaged') {
+          elements.scheduleValue.textContent = 'Existing trigger';
+          appendScheduleDetailLine('Frequency unavailable');
+          appendScheduleDetailLine('Created outside Retention Manager');
+          return;
+        }
+
+        if (trigger.state === 'missing') {
+          elements.scheduleValue.textContent = frequency.label;
+          appendScheduleDetailLine('Managed trigger is missing');
+          appendScheduleDetailLine('Repair required');
+          return;
+        }
+
         elements.scheduleValue.textContent = trigger.triggerCount === 1
-          ? 'Time-driven trigger'
+          ? 'Schedule needs attention'
           : `${trigger.triggerCount} detected triggers`;
-        elements.scheduleDetail.textContent = trigger.triggerCount === 1
-          ? 'Exact frequency is not available for a manually created trigger.'
-          : trigger.summary;
+        appendScheduleDetailLine('Repair required');
+      }
+
+      function appendScheduleDetailLine(text) {
+        const line = document.createElement('span');
+        line.className = 'schedule-detail-line';
+        line.textContent = text;
+        elements.scheduleDetail.appendChild(line);
+      }
+
+      function getScheduleFrequencyOption(trigger, value) {
+        return trigger.frequencyOptions.find(option => option.value === value) || {
+          value,
+          label: value,
+          runsPerDay: 0,
+        };
+      }
+
+      function formatDailyScheduleLine(preferences) {
+        const [hourValue, minuteValue] = preferences.dailyTime
+          .split(':')
+          .map(Number);
+        const meridiem = hourValue >= 12 ? 'PM' : 'AM';
+        const hour = hourValue % 12 || 12;
+        const minute = String(minuteValue).padStart(2, '0');
+        const abbreviation = getTimeZoneAbbreviation(preferences.timeZone);
+        return `Around ${hour}:${minute} ${meridiem} ${abbreviation}`;
+      }
+
+      function getTimeZoneAbbreviation(timeZone) {
+        try {
+          const parts = new Intl.DateTimeFormat('en-US', {
+            timeZone,
+            timeZoneName: 'short',
+          }).formatToParts(new Date());
+          const timeZoneName = parts.find(part => part.type === 'timeZoneName');
+          return timeZoneName ? timeZoneName.value : timeZone;
+        } catch (error) {
+          return timeZone;
+        }
+      }
+
+      function renderScheduleForm(trigger) {
+        currentTrigger = clone(trigger);
+        populateScheduleFrequencyOptions(
+          trigger.frequencyOptions,
+          trigger.preferences.frequency,
+        );
+        populateScheduleTimeZoneOptions(trigger.preferences.timeZone);
+
+        elements.scheduleEnabled.checked = trigger.preferences.enabled;
+        elements.scheduleFrequency.value = trigger.preferences.frequency;
+        elements.scheduleDailyTime.value = trigger.preferences.dailyTime;
+        elements.scheduleTimeZone.value = trigger.preferences.timeZone;
+        elements.scheduleReplaceAcknowledgement.checked = false;
+        clearScheduleValidationErrors();
+
+        initialSchedulePreferences = clone(getScheduleFormPreferences());
+        scheduleDirty = false;
+        renderScheduleStatusWarning(trigger);
+        updateScheduleFields();
+        updateScheduleDirtyState();
+
+        if (trigger.state === 'setup' || trigger.status === 'warning') {
+          elements.scheduleSettingsPanel.open = true;
+        }
+      }
+
+      function populateScheduleFrequencyOptions(options, selectedValue) {
+        elements.scheduleFrequency.textContent = '';
+        options.forEach(option => {
+          const element = document.createElement('option');
+          element.value = option.value;
+          element.textContent = option.label;
+          element.selected = option.value === selectedValue;
+          elements.scheduleFrequency.appendChild(element);
+        });
+      }
+
+      function populateScheduleTimeZoneOptions(selectedTimeZone) {
+        let timeZones = [];
+        try {
+          if (typeof Intl.supportedValuesOf === 'function') {
+            timeZones = Intl.supportedValuesOf('timeZone');
+          }
+        } catch (error) {
+          timeZones = [];
+        }
+
+        const browserTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const fallbackTimeZones = [
+          selectedTimeZone,
+          browserTimeZone,
+          'America/New_York',
+          'America/Chicago',
+          'America/Denver',
+          'America/Phoenix',
+          'America/Los_Angeles',
+          'America/Anchorage',
+          'Pacific/Honolulu',
+          'Etc/UTC',
+        ];
+        const uniqueTimeZones = [...new Set([
+          ...fallbackTimeZones.filter(Boolean),
+          ...timeZones,
+        ])];
+
+        elements.scheduleTimeZone.textContent = '';
+        uniqueTimeZones.forEach(timeZone => {
+          const option = document.createElement('option');
+          option.value = timeZone;
+          option.textContent = timeZone;
+          elements.scheduleTimeZone.appendChild(option);
+        });
+      }
+
+      function renderScheduleStatusWarning(trigger) {
+        const warningMessages = {
+          unmanaged:
+            'The existing trigger was created outside Retention Manager, so its ' +
+            'frequency cannot be read. Saving will replace it with the selected schedule.',
+          duplicate:
+            `${trigger.triggerCount} retention triggers were detected. Repairing ` +
+            'the schedule will leave one verified managed trigger.',
+          missing:
+            'The saved managed trigger is missing. Repairing will recreate it ' +
+            'with the schedule shown above.',
+          invalid_configuration:
+            'The saved schedule metadata is invalid. Saving or repairing will ' +
+            'replace it with the schedule shown above.',
+        };
+        const message = warningMessages[trigger.state];
+
+        elements.scheduleStatusWarning.hidden = !message;
+        elements.scheduleStatusWarningText.textContent = message || '';
+        elements.scheduleReplaceAcknowledgementRow.hidden =
+          !trigger.requiresExistingTriggerConfirmation;
+      }
+
+      function getScheduleFormPreferences() {
+        return {
+          enabled: elements.scheduleEnabled.checked,
+          frequency: elements.scheduleFrequency.value,
+          dailyTime: elements.scheduleDailyTime.value,
+          timeZone: elements.scheduleTimeZone.value.trim(),
+        };
+      }
+
+      function schedulePreferencesEqual(first, second) {
+        return Boolean(first && second) &&
+          first.enabled === second.enabled &&
+          first.frequency === second.frequency &&
+          first.dailyTime === second.dailyTime &&
+          first.timeZone === second.timeZone;
+      }
+
+      function handleScheduleChange() {
+        updateScheduleFields();
+        validateScheduleForm(false);
+        updateScheduleDirtyState();
+      }
+
+      function updateScheduleFields() {
+        const preferences = getScheduleFormPreferences();
+        const daily = preferences.frequency === 'daily';
+        elements.scheduleDailyTimeField.hidden = !daily;
+        elements.scheduleTimeZoneField.hidden = !daily;
+
+        const frequency = currentTrigger
+          ? getScheduleFrequencyOption(currentTrigger, preferences.frequency)
+          : null;
+        elements.scheduleFrequencyWarning.hidden = daily || !frequency;
+        elements.scheduleFrequencyWarning.textContent = frequency && !daily
+          ? `${frequency.label} starts when you save this schedule. The first ` +
+            'scan should occur approximately one interval later, and subsequent ' +
+            'scans continue from that cadence. Google may shift execution times ' +
+            `slightly. This setting can run up to ${frequency.runsPerDay} times ` +
+            'per day and consumes more Apps Script execution quota. Daily remains ' +
+            'the recommended default.'
+          : '';
+      }
+
+      function updateScheduleDirtyState() {
+        if (!initialSchedulePreferences || !currentTrigger) {
+          return;
+        }
+
+        const preferences = getScheduleFormPreferences();
+        scheduleDirty = !schedulePreferencesEqual(
+          preferences,
+          initialSchedulePreferences,
+        );
+        const setupRequired = currentTrigger.state === 'setup';
+        const unmanagedRequired = currentTrigger.state === 'unmanaged';
+        const repairRequired = currentTrigger.needsRepair;
+        const confirmationRequired =
+          currentTrigger.requiresExistingTriggerConfirmation;
+        const confirmed = elements.scheduleReplaceAcknowledgement.checked;
+        const controlsBusy = busy || scheduleBusy;
+
+        [
+          elements.scheduleEnabled,
+          elements.scheduleFrequency,
+          elements.scheduleDailyTime,
+          elements.scheduleTimeZone,
+          elements.scheduleReplaceAcknowledgement,
+        ].forEach(control => {
+          control.disabled = controlsBusy;
+        });
+
+        elements.scheduleUnsavedText.hidden = !scheduleDirty;
+        elements.scheduleResetButton.disabled = controlsBusy || !scheduleDirty;
+        elements.scheduleRepairButton.hidden = !repairRequired;
+        elements.scheduleRepairButton.disabled = controlsBusy ||
+          (confirmationRequired && !confirmed);
+        elements.scheduleSaveButton.hidden = repairRequired;
+        elements.scheduleSaveButton.disabled = controlsBusy ||
+          (!scheduleDirty && !setupRequired && !unmanagedRequired) ||
+          (confirmationRequired && !confirmed);
+
+        if (scheduleBusy) {
+          return;
+        }
+        if (unmanagedRequired) {
+          elements.scheduleSaveButton.textContent = preferences.enabled
+            ? 'Replace existing trigger'
+            : 'Remove existing trigger';
+        } else if (setupRequired) {
+          elements.scheduleSaveButton.textContent = preferences.enabled
+            ? 'Enable daily schedule'
+            : 'Save disabled schedule';
+        } else if (
+          initialSchedulePreferences.enabled &&
+          !preferences.enabled
+        ) {
+          elements.scheduleSaveButton.textContent = 'Disable schedule';
+        } else if (
+          !initialSchedulePreferences.enabled &&
+          preferences.enabled
+        ) {
+          elements.scheduleSaveButton.textContent = 'Enable schedule';
+        } else {
+          elements.scheduleSaveButton.textContent = 'Update schedule';
+        }
+      }
+
+      function validateScheduleForm(showAllErrors) {
+        const preferences = getScheduleFormPreferences();
+        const frequencyValid = currentTrigger &&
+          currentTrigger.frequencyOptions.some(
+            option => option.value === preferences.frequency,
+          );
+        let timeZoneValid = Boolean(preferences.timeZone);
+
+        if (timeZoneValid) {
+          try {
+            new Intl.DateTimeFormat(undefined, {
+              timeZone: preferences.timeZone,
+            }).format(new Date());
+          } catch (error) {
+            timeZoneValid = false;
+          }
+        }
+
+        let valid = setFieldValidity(
+          elements.scheduleFrequency,
+          elements.scheduleFrequencyError,
+          Boolean(frequencyValid),
+          'Select a supported schedule frequency.',
+          showAllErrors,
+        );
+        valid = setFieldValidity(
+          elements.scheduleDailyTime,
+          elements.scheduleDailyTimeError,
+          /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(preferences.dailyTime),
+          'Select a valid daily execution time.',
+          showAllErrors,
+        ) && valid;
+        valid = setFieldValidity(
+          elements.scheduleTimeZone,
+          elements.scheduleTimeZoneError,
+          timeZoneValid,
+          'Enter a supported time zone, such as America/Chicago.',
+          showAllErrors,
+        ) && valid;
+
+        return valid;
+      }
+
+      function clearScheduleValidationErrors() {
+        [
+          [elements.scheduleFrequency, elements.scheduleFrequencyError],
+          [elements.scheduleDailyTime, elements.scheduleDailyTimeError],
+          [elements.scheduleTimeZone, elements.scheduleTimeZoneError],
+        ].forEach(([input, error]) => {
+          input.setAttribute('aria-invalid', 'false');
+          error.textContent = '';
+        });
+      }
+
+      function resetScheduleForm() {
+        if (!initialSchedulePreferences) {
+          return;
+        }
+
+        elements.scheduleEnabled.checked = initialSchedulePreferences.enabled;
+        elements.scheduleFrequency.value = initialSchedulePreferences.frequency;
+        elements.scheduleDailyTime.value = initialSchedulePreferences.dailyTime;
+        elements.scheduleTimeZone.value = initialSchedulePreferences.timeZone;
+        elements.scheduleReplaceAcknowledgement.checked = false;
+        clearScheduleValidationErrors();
+        updateScheduleFields();
+        updateScheduleDirtyState();
+        clearNotice();
+      }
+
+      function saveSchedule(event) {
+        event.preventDefault();
+        submitScheduleOperation(false);
+      }
+
+      function repairSchedule() {
+        submitScheduleOperation(true);
+      }
+
+      function submitScheduleOperation(repair) {
+        clearNotice();
+
+        if (!validateScheduleForm(true)) {
+          elements.scheduleSettingsPanel.open = true;
+          showNotice('Correct the highlighted schedule settings.', 'error');
+          const invalid = elements.scheduleForm.querySelector('[aria-invalid="true"]');
+          if (invalid) {
+            invalid.focus();
+          }
+          return;
+        }
+        if (
+          currentTrigger.requiresExistingTriggerConfirmation &&
+          !elements.scheduleReplaceAcknowledgement.checked
+        ) {
+          showNotice(
+            'Acknowledge the existing-trigger cleanup before continuing.',
+            'error',
+          );
+          elements.scheduleReplaceAcknowledgement.focus();
+          return;
+        }
+
+        setScheduleBusy(true, repair ? 'Repairing…' : 'Saving…');
+        const request = {
+          preferences: getScheduleFormPreferences(),
+          confirmExistingTriggers:
+            elements.scheduleReplaceAcknowledgement.checked,
+        };
+        const runner = google.script.run
+          .withSuccessHandler(response => {
+            applicationData.timeZone = response.trigger.preferences.timeZone;
+            renderTrigger(response.trigger);
+            renderScheduleForm(response.trigger);
+            setScheduleBusy(false);
+            const messages = {
+              enabled: 'Scheduled scans enabled successfully.',
+              disabled: 'Scheduled scans disabled. Manual scans remain available.',
+              repaired: 'Retention schedule repaired successfully.',
+              updated: 'Retention schedule updated successfully.',
+            };
+            showNotice(messages[response.action] || 'Schedule saved.', 'success');
+          })
+          .withFailureHandler(error => {
+            setScheduleBusy(false);
+            showNotice(`Schedule update failed: ${getErrorMessage(error)}`, 'error');
+            refreshRuntimeOnly(false);
+          });
+
+        if (repair) {
+          runner.repairRetentionScheduleFromAdmin(request);
+        } else {
+          runner.saveRetentionScheduleFromAdmin(request);
+        }
+      }
+
+      function setScheduleBusy(isBusy, actionText) {
+        scheduleBusy = isBusy;
+        elements.scheduleSaveButton.textContent = isBusy
+          ? actionText
+          : 'Save schedule';
+        elements.scheduleRepairButton.textContent = isBusy
+          ? actionText
+          : 'Repair schedule';
+        updateScheduleDirtyState();
+        updateDirtyState();
       }
 
       function renderRuntime(runtime) {
@@ -1554,10 +2166,11 @@
         }
 
         dirty = !retentionSettingsEqual(getFormSettings(), initialSettings);
+        const controlsBusy = busy || scheduleBusy;
         elements.unsavedText.hidden = !dirty;
-        elements.discardButton.disabled = busy || !dirty;
-        elements.saveButton.disabled = busy || !dirty;
-        elements.runButton.disabled = busy || dirty;
+        elements.discardButton.disabled = controlsBusy || !dirty;
+        elements.saveButton.disabled = controlsBusy || !dirty;
+        elements.runButton.disabled = controlsBusy || dirty;
         elements.runHelp.textContent = dirty
           ? 'Save or discard your changes before running a retention scan.'
           : 'Immediately process all eligible messages using the saved settings.';
@@ -1915,11 +2528,20 @@
           .runRetentionFromAdmin();
       }
 
-      function refreshRuntimeOnly() {
+      function refreshRuntimeOnly(refreshSchedule) {
         google.script.run
           .withSuccessHandler(data => {
+            applicationData.timeZone = data.trigger.preferences.timeZone;
             renderRuntime(data.runtime);
             renderTrigger(data.trigger);
+            if (refreshSchedule || !scheduleDirty) {
+              renderScheduleForm(data.trigger);
+            } else {
+              currentTrigger = clone(data.trigger);
+              renderScheduleStatusWarning(data.trigger);
+              updateScheduleFields();
+              updateScheduleDirtyState();
+            }
           })
           .withFailureHandler(() => {})
           .getAdminPageData();
@@ -1948,9 +2570,7 @@
           ? actionText
           : 'Run retention scan now';
         updateDirtyState();
-        if (!dirty) {
-          elements.runButton.disabled = busy;
-        }
+        updateScheduleDirtyState();
       }
 
       function showNotice(message, type) {

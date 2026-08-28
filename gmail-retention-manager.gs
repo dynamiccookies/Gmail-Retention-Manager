@@ -175,6 +175,53 @@ const RETENTION_ADMIN_PREFERENCES_SCHEMA_VERSION = 1;
 const RETENTION_ADMIN_FACTORY_PREFERENCES = Object.freeze({
   theme: 'dark',
 });
+const RETENTION_SCHEDULE_PROPERTY_KEY = 'GMAIL_RETENTION_SCHEDULE';
+const RETENTION_SCHEDULE_SCHEMA_VERSION = 1;
+const RETENTION_SCHEDULE_HANDLER = 'enforceGmailRetention';
+const RETENTION_SCHEDULE_DEFAULT_FREQUENCY = 'daily';
+const RETENTION_SCHEDULE_DEFAULT_DAILY_TIME = '07:00';
+const RETENTION_SCHEDULE_FREQUENCIES = Object.freeze({
+  every_15_minutes: Object.freeze({
+    label: 'Every 15 minutes',
+    unit: 'minutes',
+    interval: 15,
+  }),
+  every_30_minutes: Object.freeze({
+    label: 'Every 30 minutes',
+    unit: 'minutes',
+    interval: 30,
+  }),
+  every_hour: Object.freeze({
+    label: 'Every hour',
+    unit: 'hours',
+    interval: 1,
+  }),
+  every_2_hours: Object.freeze({
+    label: 'Every 2 hours',
+    unit: 'hours',
+    interval: 2,
+  }),
+  every_4_hours: Object.freeze({
+    label: 'Every 4 hours',
+    unit: 'hours',
+    interval: 4,
+  }),
+  every_6_hours: Object.freeze({
+    label: 'Every 6 hours',
+    unit: 'hours',
+    interval: 6,
+  }),
+  every_12_hours: Object.freeze({
+    label: 'Every 12 hours',
+    unit: 'hours',
+    interval: 12,
+  }),
+  daily: Object.freeze({
+    label: 'Daily',
+    unit: 'days',
+    interval: 1,
+  }),
+});
 
 /*
  * These values control application behavior but are not user preferences. They
@@ -657,6 +704,249 @@ function getRetentionAdminPreferences() {
   }
 }
 
+/** @return {string} Valid default time zone for a new schedule. */
+function getDefaultRetentionScheduleTimeZone() {
+  const scriptTimeZone = Session.getScriptTimeZone();
+
+  try {
+    return validateRetentionScheduleTimeZone(scriptTimeZone);
+  } catch (error) {
+    console.error(
+      `Invalid Apps Script project time zone ${scriptTimeZone}: ${error.message}`,
+    );
+    return 'Etc/UTC';
+  }
+}
+
+/** @return {Object} Default schedule for a new or not-yet-managed installation. */
+function createDefaultRetentionScheduleConfiguration() {
+  return {
+    schemaVersion: RETENTION_SCHEDULE_SCHEMA_VERSION,
+    configured: false,
+    preferences: {
+      enabled: true,
+      frequency: RETENTION_SCHEDULE_DEFAULT_FREQUENCY,
+      dailyTime: RETENTION_SCHEDULE_DEFAULT_DAILY_TIME,
+      timeZone: getDefaultRetentionScheduleTimeZone(),
+    },
+    managedTriggerId: null,
+    updatedAt: null,
+    configurationError: null,
+  };
+}
+
+/**
+ * Validates an IANA time zone by asking Apps Script to format a date with it.
+ *
+ * @param {*} value Candidate time zone.
+ * @return {string} Validated time-zone name.
+ */
+function validateRetentionScheduleTimeZone(value) {
+  if (typeof value !== 'string' || !value.trim() || value.length > 100) {
+    throw new Error('schedule time zone must be a valid time-zone name.');
+  }
+
+  const timeZone = value.trim();
+  try {
+    Utilities.formatDate(new Date(), timeZone, 'yyyy-MM-dd HH:mm z');
+  } catch (error) {
+    throw new Error(`${timeZone} is not a supported time zone.`);
+  }
+
+  return timeZone;
+}
+
+/**
+ * Validates the user-controlled portion of the retention schedule.
+ *
+ * @param {*} preferences Candidate schedule preferences.
+ * @return {Object} Normalized preferences.
+ */
+function validateRetentionSchedulePreferences(preferences) {
+  if (!isConfigurationObject(preferences)) {
+    throw new Error('schedule preferences must be an object.');
+  }
+
+  const expectedKeys = ['enabled', 'frequency', 'dailyTime', 'timeZone'];
+  const missingKeys = expectedKeys.filter(
+    key => !Object.prototype.hasOwnProperty.call(preferences, key),
+  );
+  const unknownKeys = Object.keys(preferences).filter(
+    key => !expectedKeys.includes(key),
+  );
+
+  if (missingKeys.length > 0) {
+    throw new Error(`schedule preferences are missing: ${missingKeys.join(', ')}.`);
+  }
+  if (unknownKeys.length > 0) {
+    throw new Error(
+      `schedule preferences contain unknown fields: ${unknownKeys.join(', ')}.`,
+    );
+  }
+  if (typeof preferences.enabled !== 'boolean') {
+    throw new Error('schedule enabled must be true or false.');
+  }
+  if (!Object.prototype.hasOwnProperty.call(
+    RETENTION_SCHEDULE_FREQUENCIES,
+    preferences.frequency,
+  )) {
+    throw new Error('schedule frequency is not supported.');
+  }
+  if (
+    typeof preferences.dailyTime !== 'string' ||
+    !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(preferences.dailyTime)
+  ) {
+    throw new Error('daily schedule time must use 24-hour HH:MM format.');
+  }
+
+  return {
+    enabled: preferences.enabled,
+    frequency: preferences.frequency,
+    dailyTime: preferences.dailyTime,
+    timeZone: validateRetentionScheduleTimeZone(preferences.timeZone),
+  };
+}
+
+/**
+ * Loads schedule preferences and managed-trigger identity. Invalid schedule
+ * metadata never prevents a manual Gmail retention scan.
+ *
+ * @return {Object} Detached schedule configuration.
+ */
+function getRetentionScheduleConfiguration() {
+  const storedValue = PropertiesService.getScriptProperties().getProperty(
+    RETENTION_SCHEDULE_PROPERTY_KEY,
+  );
+
+  if (storedValue === null) {
+    return createDefaultRetentionScheduleConfiguration();
+  }
+
+  try {
+    const parsed = JSON.parse(storedValue);
+
+    if (
+      !isConfigurationObject(parsed) ||
+      parsed.schemaVersion !== RETENTION_SCHEDULE_SCHEMA_VERSION
+    ) {
+      throw new Error('unsupported or missing schedule schema');
+    }
+    if (typeof parsed.configured !== 'boolean') {
+      throw new Error('configured must be true or false');
+    }
+    if (
+      parsed.managedTriggerId !== null &&
+      (typeof parsed.managedTriggerId !== 'string' || !parsed.managedTriggerId)
+    ) {
+      throw new Error('managedTriggerId must be null or a nonempty string');
+    }
+    if (
+      parsed.updatedAt !== null &&
+      (typeof parsed.updatedAt !== 'string' ||
+        Number.isNaN(new Date(parsed.updatedAt).getTime()))
+    ) {
+      throw new Error('updatedAt must be null or a valid timestamp');
+    }
+
+    return {
+      schemaVersion: RETENTION_SCHEDULE_SCHEMA_VERSION,
+      configured: parsed.configured,
+      preferences: validateRetentionSchedulePreferences(parsed.preferences),
+      managedTriggerId: parsed.managedTriggerId,
+      updatedAt: parsed.updatedAt,
+      configurationError: null,
+    };
+  } catch (error) {
+    console.error(
+      `Ignoring invalid ${RETENTION_SCHEDULE_PROPERTY_KEY}: ${error.message}`,
+    );
+    return {
+      ...createDefaultRetentionScheduleConfiguration(),
+      configurationError:
+        'The saved schedule metadata is invalid and must be replaced.',
+    };
+  }
+}
+
+/**
+ * Persists validated schedule preferences and operational trigger identity.
+ *
+ * @param {Object} preferences User-controlled schedule preferences.
+ * @param {?string} managedTriggerId Current managed trigger ID.
+ * @return {Object} Saved schedule configuration.
+ */
+function saveRetentionScheduleConfiguration(preferences, managedTriggerId) {
+  const validatedPreferences = validateRetentionSchedulePreferences(preferences);
+
+  if (
+    managedTriggerId !== null &&
+    (typeof managedTriggerId !== 'string' || !managedTriggerId)
+  ) {
+    throw new Error('managed trigger ID must be null or a nonempty string.');
+  }
+
+  const configuration = {
+    schemaVersion: RETENTION_SCHEDULE_SCHEMA_VERSION,
+    configured: true,
+    preferences: validatedPreferences,
+    managedTriggerId,
+    updatedAt: new Date().toISOString(),
+  };
+
+  PropertiesService.getScriptProperties().setProperty(
+    RETENTION_SCHEDULE_PROPERTY_KEY,
+    JSON.stringify(configuration),
+  );
+
+  return {
+    ...configuration,
+    preferences: { ...validatedPreferences },
+    configurationError: null,
+  };
+}
+
+/** @return {string} Time zone used for schedules and user-facing timestamps. */
+function getConfiguredRetentionTimeZone() {
+  const configuration = getRetentionScheduleConfiguration();
+  return configuration.configurationError
+    ? getDefaultRetentionScheduleTimeZone()
+    : configuration.preferences.timeZone;
+}
+
+/** @return {Array} Time-driven triggers that call the retention entry point. */
+function getRetentionClockTriggers() {
+  return ScriptApp.getProjectTriggers().filter(trigger =>
+    trigger.getHandlerFunction() === RETENTION_SCHEDULE_HANDLER &&
+      trigger.getEventType() === ScriptApp.EventType.CLOCK,
+  );
+}
+
+/**
+ * Creates an Apps Script trigger from validated schedule preferences.
+ *
+ * @param {Object} preferences Validated enabled schedule preferences.
+ * @return {Trigger} Newly created trigger.
+ */
+function createManagedRetentionTrigger(preferences) {
+  const definition = RETENTION_SCHEDULE_FREQUENCIES[preferences.frequency];
+  let builder = ScriptApp.newTrigger(RETENTION_SCHEDULE_HANDLER).timeBased();
+
+  if (definition.unit === 'minutes') {
+    return builder.everyMinutes(definition.interval).create();
+  }
+  if (definition.unit === 'hours') {
+    return builder.everyHours(definition.interval).create();
+  }
+
+  const [hour, minute] = preferences.dailyTime.split(':').map(Number);
+  builder = builder
+    .atHour(hour)
+    .nearMinute(minute)
+    .everyDays(1)
+    .inTimezone(preferences.timeZone);
+  return builder.create();
+}
+
 /** @return {Object} Empty operational state for a new installation. */
 function createDefaultRetentionRuntimeState() {
   return {
@@ -779,46 +1069,138 @@ function doGet() {
 }
 
 /**
- * Returns read-only information about scheduled retention triggers. Apps Script
- * exposes trigger type and handler but not the recurrence of an existing clock
- * trigger, so exact frequency will be available after app-managed scheduling.
+ * Returns verified schedule state. Apps Script cannot reveal the frequency of a
+ * manually created trigger, so only a trigger ID recorded by this application
+ * can be presented as managed.
  *
- * @return {Object} Trigger status for the dashboard.
+ * @return {Object} Trigger status and editable schedule preferences.
  */
 function getRetentionTriggerStatus() {
-  const matchingTriggers = ScriptApp.getProjectTriggers().filter(trigger =>
-    trigger.getHandlerFunction() === 'enforceGmailRetention' &&
-      trigger.getEventType() === ScriptApp.EventType.CLOCK,
-  );
+  const configuration = getRetentionScheduleConfiguration();
+  const matchingTriggers = getRetentionClockTriggers();
   const triggerCount = matchingTriggers.length;
+  const managedTrigger = configuration.managedTriggerId
+    ? matchingTriggers.find(
+      trigger => trigger.getUniqueId() === configuration.managedTriggerId,
+    ) || null
+    : null;
+  const unmanagedTriggerCount = managedTrigger
+    ? triggerCount - 1
+    : triggerCount;
+  const frequencyOptions = Object.entries(RETENTION_SCHEDULE_FREQUENCIES).map(
+    ([value, definition]) => ({
+      value,
+      label: definition.label,
+      runsPerDay: definition.unit === 'minutes'
+        ? 1440 / definition.interval
+        : definition.unit === 'hours'
+          ? 24 / definition.interval
+          : 1,
+    }),
+  );
+  const baseStatus = {
+    configured: configuration.configured,
+    configurationError: configuration.configurationError,
+    preferences: { ...configuration.preferences },
+    managedTriggerId: configuration.managedTriggerId,
+    managed: Boolean(managedTrigger),
+    triggerCount,
+    unmanagedTriggerCount,
+    frequencyOptions,
+    updatedAt: configuration.updatedAt,
+  };
 
-  if (triggerCount === 0) {
+  if (configuration.configurationError) {
     return {
-      enabled: false,
-      triggerCount,
-      status: 'disabled',
-      summary: 'No scheduled retention trigger was detected.',
+      ...baseStatus,
+      enabled: triggerCount > 0,
+      status: 'warning',
+      state: 'invalid_configuration',
+      needsRepair: true,
+      requiresExistingTriggerConfirmation: triggerCount > 0,
+      summary: configuration.configurationError,
     };
   }
 
-  if (triggerCount === 1) {
+  if (managedTrigger && configuration.preferences.enabled) {
+    if (unmanagedTriggerCount > 0) {
+      return {
+        ...baseStatus,
+        enabled: true,
+        status: 'warning',
+        state: 'duplicate',
+        needsRepair: true,
+        requiresExistingTriggerConfirmation: true,
+        summary:
+          `${triggerCount} retention triggers were detected. Repair the ` +
+          'schedule to remove the extra trigger(s).',
+      };
+    }
+
     return {
+      ...baseStatus,
       enabled: true,
-      triggerCount,
       status: 'enabled',
+      state: 'managed',
+      needsRepair: false,
+      requiresExistingTriggerConfirmation: false,
       summary:
-        'A time-driven trigger is active. Its exact frequency is not available ' +
-        'until the schedule is managed by this application.',
+        `${RETENTION_SCHEDULE_FREQUENCIES[
+          configuration.preferences.frequency
+        ].label} retention schedule is active.`,
+    };
+  }
+
+  if (triggerCount > 0) {
+    return {
+      ...baseStatus,
+      enabled: true,
+      status: 'warning',
+      state: triggerCount > 1 ? 'duplicate' : 'unmanaged',
+      needsRepair: triggerCount > 1,
+      requiresExistingTriggerConfirmation: true,
+      summary: triggerCount > 1
+        ? `${triggerCount} retention triggers were detected. Choose the ` +
+          'desired schedule and repair the duplicates.'
+        : 'An existing retention trigger is active, but Apps Script does not ' +
+          'expose its frequency. Replace it to manage the schedule here.',
+    };
+  }
+
+  if (configuration.configured && configuration.preferences.enabled) {
+    return {
+      ...baseStatus,
+      enabled: false,
+      status: 'warning',
+      state: 'missing',
+      needsRepair: true,
+      requiresExistingTriggerConfirmation: false,
+      summary:
+        'The saved schedule is enabled, but its managed trigger is missing.',
+    };
+  }
+
+  if (!configuration.configured) {
+    return {
+      ...baseStatus,
+      enabled: false,
+      status: 'disabled',
+      state: 'setup',
+      needsRepair: false,
+      requiresExistingTriggerConfirmation: false,
+      summary:
+        'Scheduled scans are not configured. Enable the default daily schedule below.',
     };
   }
 
   return {
-    enabled: true,
-    triggerCount,
-    status: 'warning',
-    summary:
-      `${triggerCount} retention triggers were detected. Duplicate runs may ` +
-      'occur until the schedule is repaired.',
+    ...baseStatus,
+    enabled: false,
+    status: 'disabled',
+    state: 'disabled',
+    needsRepair: false,
+    requiresExistingTriggerConfirmation: false,
+    summary: 'Scheduled scans are disabled. Manual scans remain available.',
   };
 }
 
@@ -829,6 +1211,7 @@ function getRetentionTriggerStatus() {
  */
 function getAdminPageData() {
   const identity = assertAdminOwnerAccess();
+  const trigger = getRetentionTriggerStatus();
 
   return {
     application: {
@@ -838,13 +1221,13 @@ function getAdminPageData() {
       releasesUrl: `${RETENTION_CONFIG.PROJECT_REPOSITORY_URL}/releases`,
       currentReleaseUrl: getProjectReleaseUrl(),
       ownerEmail: identity.ownerEmail,
-      timeZone: Session.getScriptTimeZone(),
+      timeZone: trigger.preferences.timeZone,
     },
     configurationSchemaVersion: RETENTION_SETTINGS_SCHEMA_VERSION,
     settings: copyRetentionSettings(getRetentionSettings()),
     adminPreferences: getRetentionAdminPreferences(),
     runtime: getRetentionRuntimeState(),
-    trigger: getRetentionTriggerStatus(),
+    trigger,
   };
 }
 
@@ -901,6 +1284,157 @@ function saveAdminPageSettings(request) {
     settings: saveRetentionSettings(validatedSettings),
     savedAt: new Date().toISOString(),
   };
+}
+
+/**
+ * Compares normalized schedule preferences.
+ *
+ * @param {Object} first First preference object.
+ * @param {Object} second Second preference object.
+ * @return {boolean} Whether every preference matches.
+ */
+function retentionSchedulePreferencesEqual(first, second) {
+  return Boolean(first && second) &&
+    first.enabled === second.enabled &&
+    first.frequency === second.frequency &&
+    first.dailyTime === second.dailyTime &&
+    first.timeZone === second.timeZone;
+}
+
+/**
+ * Validates and applies one schedule operation while holding the script lock.
+ * A replacement trigger is created and recorded before the prior trigger is
+ * removed, preventing a failed creation from disabling a working schedule.
+ *
+ * @param {Object} request Schedule preferences and confirmations.
+ * @param {boolean} repairOnly Whether this is an explicit repair action.
+ * @return {Object} Refreshed trigger state and operation type.
+ */
+function applyRetentionScheduleFromAdmin(request, repairOnly) {
+  assertAdminOwnerAccess();
+
+  if (!isConfigurationObject(request)) {
+    throw new Error('The schedule request must be an object.');
+  }
+
+  const preferences = validateRetentionSchedulePreferences(request.preferences);
+  const confirmExistingTriggers = request.confirmExistingTriggers === true;
+  const lock = LockService.getScriptLock();
+
+  if (!lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
+    throw new Error(
+      'Another retention operation is active. Wait for it to finish and try again.',
+    );
+  }
+
+  try {
+    const beforeStatus = getRetentionTriggerStatus();
+    const beforeConfiguration = getRetentionScheduleConfiguration();
+    const existingTriggers = getRetentionClockTriggers();
+    const managedTrigger = beforeConfiguration.managedTriggerId
+      ? existingTriggers.find(
+        trigger => trigger.getUniqueId() === beforeConfiguration.managedTriggerId,
+      ) || null
+      : null;
+
+    if (
+      beforeStatus.requiresExistingTriggerConfirmation &&
+      !confirmExistingTriggers
+    ) {
+      throw new Error(
+        'Confirm that Retention Manager may replace or remove the existing ' +
+        'retention trigger(s).',
+      );
+    }
+
+    if (
+      repairOnly &&
+      managedTrigger &&
+      preferences.enabled &&
+      retentionSchedulePreferencesEqual(
+        preferences,
+        beforeConfiguration.preferences,
+      )
+    ) {
+      const extraTriggers = existingTriggers.filter(
+        trigger => trigger.getUniqueId() !== managedTrigger.getUniqueId(),
+      );
+      extraTriggers.forEach(trigger => ScriptApp.deleteTrigger(trigger));
+
+      return {
+        action: 'repaired',
+        trigger: getRetentionTriggerStatus(),
+        savedAt: new Date().toISOString(),
+      };
+    }
+
+    if (!preferences.enabled) {
+      saveRetentionScheduleConfiguration(preferences, null);
+      existingTriggers.forEach(trigger => ScriptApp.deleteTrigger(trigger));
+
+      return {
+        action: 'disabled',
+        trigger: getRetentionTriggerStatus(),
+        savedAt: new Date().toISOString(),
+      };
+    }
+
+    let newTrigger = null;
+    try {
+      newTrigger = createManagedRetentionTrigger(preferences);
+      saveRetentionScheduleConfiguration(
+        preferences,
+        newTrigger.getUniqueId(),
+      );
+    } catch (error) {
+      if (newTrigger) {
+        try {
+          ScriptApp.deleteTrigger(newTrigger);
+        } catch (cleanupError) {
+          console.error(
+            `Unable to remove failed replacement trigger: ${cleanupError.message}`,
+          );
+        }
+      }
+      throw error;
+    }
+
+    existingTriggers.forEach(trigger => ScriptApp.deleteTrigger(trigger));
+
+    const action = repairOnly
+      ? 'repaired'
+      : beforeStatus.enabled
+        ? 'updated'
+        : 'enabled';
+
+    return {
+      action,
+      trigger: getRetentionTriggerStatus(),
+      savedAt: new Date().toISOString(),
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Creates, replaces, disables, or re-enables the managed retention schedule.
+ *
+ * @param {Object} request Schedule preferences and confirmations.
+ * @return {Object} Refreshed trigger state.
+ */
+function saveRetentionScheduleFromAdmin(request) {
+  return applyRetentionScheduleFromAdmin(request, false);
+}
+
+/**
+ * Repairs a missing managed trigger or removes duplicate retention triggers.
+ *
+ * @param {Object} request Schedule preferences and confirmations.
+ * @return {Object} Refreshed trigger state.
+ */
+function repairRetentionScheduleFromAdmin(request) {
+  return applyRetentionScheduleFromAdmin(request, true);
 }
 
 /**
@@ -2407,7 +2941,7 @@ function sendDeletionSummaries(records, runDate) {
   const notificationRetentionLabel = getOrCreateLabel(
     getNotificationRetentionLabelName(),
   );
-  const timeZone = Session.getScriptTimeZone();
+  const timeZone = getConfiguredRetentionTimeZone();
   const availableUpdate = getAvailableUpdate();
   verboseLog('NOTIFICATION LABELS', {
     recipient,
