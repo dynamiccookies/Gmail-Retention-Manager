@@ -1,11 +1,11 @@
 # Gmail Retention Manager
 
 [![GitHub License](https://img.shields.io/github/license/dynamiccookies/gmail-retention-manager?style=for-the-badge)](https://github.com/dynamiccookies/gmail-retention-manager/blob/main/LICENSE)
-[![GitHub File Size](https://img.shields.io/github/size/dynamiccookies/gmail-retention-manager/gmail-retention-manager.js?style=for-the-badge)](https://github.com/dynamiccookies/gmail-retention-manager/blob/main/gmail-retention-manager.js)
+[![GitHub File Size](https://img.shields.io/github/size/dynamiccookies/gmail-retention-manager/gmail-retention-manager.gs?style=for-the-badge)](https://github.com/dynamiccookies/gmail-retention-manager/blob/main/gmail-retention-manager.gs)
 [![GitHub Release Date](https://img.shields.io/github/release-date/dynamiccookies/gmail-retention-manager?style=for-the-badge)](https://github.com/dynamiccookies/gmail-retention-manager/releases/latest)
 [![GitHub Release](https://img.shields.io/github/v/release/dynamiccookies/gmail-retention-manager?style=for-the-badge)](https://github.com/dynamiccookies/gmail-retention-manager/releases/latest)
 
-Automatically move Gmail conversations to Trash after a retention period defined by a Gmail label.
+Automatically move active Gmail messages to Trash after a retention period defined by a Gmail label.
 
 Gmail filters decide **which conversations receive a retention policy**. This Google Apps Script decides **when those conversations expire**. Add, rename, or remove retention labels without modifying the script.
 
@@ -19,10 +19,12 @@ Gmail filters decide **which conversations receive a retention policy**. This Go
 - New replies reset the retention clock for the entire Gmail conversation
 - The longest policy wins when multiple retention labels are present
 - Shorter or equivalent retention labels are automatically removed
-- Expired conversations are moved to Trash, not permanently deleted by the script
+- Active messages in expired conversations are moved to Trash, not permanently deleted by the script
+- Mixed Inbox/Trash conversations are processed without reprocessing messages already in Trash
 - HTML deletion summaries with direct links to the trashed Gmail conversations
 - Automatic cleanup of the script's own notification messages and temporary labels
 - Optional GitHub release checks with update notices in notification emails
+- Persistent, validated settings that survive source-code updates
 - Verbose diagnostic logging for installation and troubleshooting
 - Script locking and batch processing to reduce duplicate or overlapping work
 
@@ -33,11 +35,11 @@ Gmail filters decide **which conversations receive a retention policy**. This Go
 3. The script finds every label beneath the configured root label that contains a valid retention expression.
 4. For each labeled conversation, the script calculates expiration from the newest message date.
 5. When multiple retention labels exist, the policy with the latest actual expiration timestamp wins.
-6. Expired conversations are moved to Gmail Trash.
+6. Active messages in expired conversations are moved to Gmail Trash. Messages already in Trash are skipped.
 7. The script sends a summary email containing the subject, sender, received date, retention policy, and a link to each trashed conversation.
 
 > [!IMPORTANT]
-> Gmail labels and this script operate at the **conversation/thread level**. When one message in a conversation receives a retention label, the policy applies to the entire conversation. A new reply resets the retention clock for the entire conversation.
+> Gmail retention labels operate at the **conversation/thread level**. When one message in a conversation receives a retention label, the policy applies to every active message in the conversation. A new reply resets the retention clock for the entire conversation. Messages already in Trash are skipped without preventing remaining active messages from being processed.
 
 ## Requirements
 
@@ -48,7 +50,7 @@ Gmail filters decide **which conversations receive a retention policy**. This Go
 
 ### 1. Download the script
 
-Download the latest `gmail-retention-manager.js` file from the [latest release](https://github.com/dynamiccookies/gmail-retention-manager/releases/latest).
+Download the latest `gmail-retention-manager.gs` file from the [latest release](https://github.com/dynamiccookies/gmail-retention-manager/releases/latest).
 
 ### 2. Create a Google Apps Script project
 
@@ -56,17 +58,17 @@ Download the latest `gmail-retention-manager.js` file from the [latest release](
 2. Select **New project**.
 3. Rename the project to something recognizable, such as `Gmail Retention Manager`.
 4. Delete the sample `myFunction()` code from `Code.gs`.
-5. Paste the full contents of the downloaded `gmail-retention-manager.js` file into the Apps Script editor.
+5. Paste the full contents of the downloaded `gmail-retention-manager.gs` file into the Apps Script editor.
 6. Save the project.
 
-The repository uses a `.js` extension so the source is easy to view on GitHub. Google Apps Script stores editor files with a `.gs` extension, so you can leave the project file named `Code.gs` or rename it to `gmail-retention-manager.gs`. The filename does not affect execution.
+The repository uses the native Google Apps Script `.gs` extension. You can leave the project file named `Code.gs` or rename it to `gmail-retention-manager.gs`; the filename does not affect execution.
 
 ### 3. Review the configuration
 
-The most commonly modified settings are at the top of `RETENTION_CONFIG`:
+The script includes these immutable factory defaults:
 
 ```javascript
-const RETENTION_CONFIG = Object.freeze({
+const RETENTION_FACTORY_DEFAULTS = Object.freeze({
   VERBOSE_LOGGING: false,
   ROOT_LABEL: 'Retention',
   DEFAULT_RETENTION_LABEL_SUFFIXES: Object.freeze(['7d', '1m']),
@@ -74,12 +76,18 @@ const RETENTION_CONFIG = Object.freeze({
   NOTIFICATION_RETENTION_LABEL_SUFFIX: '1d',
   SYSTEM_NOTIFICATION_LABEL_SUFFIX: '_System',
   CHECK_FOR_UPDATES: true,
-
-  // Additional settings follow...
 });
 ```
 
-The default configuration works without modification.
+The default configuration works without modification. On the first run, the
+script copies these values into the `GMAIL_RETENTION_CONFIG` Script Property as
+one JSON object with an independent configuration-schema version. From that
+point forward, the saved property—not the source defaults—is the active
+configuration.
+
+Do not edit `RETENTION_FACTORY_DEFAULTS` to change an existing installation.
+Once the Script Property exists, changing a factory default has no effect on
+that installation's active settings.
 
 ### 4. Set the project time zone
 
@@ -175,14 +183,14 @@ Changing the root label is optional. Leave the default setting unchanged unless 
 
 For example, change:
 
-```javascript
-ROOT_LABEL: 'Retention',
+```json
+"ROOT_LABEL": "Retention"
 ```
 
 to:
 
-```javascript
-ROOT_LABEL: 'Email Cleanup',
+```json
+"ROOT_LABEL": "Email Cleanup"
 ```
 
 The script will then recognize labels such as:
@@ -278,11 +286,51 @@ The update check:
 
 Disable the feature with:
 
-```javascript
-CHECK_FOR_UPDATES: false,
+```json
+"CHECK_FOR_UPDATES": false
 ```
 
+## Persistent Configuration
+
+Active settings are stored by Google with the Apps Script project rather than
+inside the replaceable `.gs` source file. The script uses one Script Property:
+
+| Property | Value |
+|---|---|
+| `GMAIL_RETENTION_CONFIG` | A JSON object containing `schemaVersion` and `settings` |
+
+The script automatically creates the property from factory defaults when it is
+missing. Every loaded or saved value is validated. Invalid JSON, missing fields,
+unknown fields, unsupported retention durations, and invalid data types stop the
+run before Gmail is changed. Invalid saved data is not silently overwritten.
+
+During manual testing, the property can be viewed or edited under **Project
+Settings → Script Properties**. Save the entire configuration as valid JSON. A
+normal initialized value has this structure:
+
+```json
+{
+  "schemaVersion": 1,
+  "settings": {
+    "VERBOSE_LOGGING": false,
+    "ROOT_LABEL": "Retention",
+    "DEFAULT_RETENTION_LABEL_SUFFIXES": ["7d", "1m"],
+    "NOTIFICATION_SUBJECT_PREFIX": "[Gmail Retention]",
+    "NOTIFICATION_RETENTION_LABEL_SUFFIX": "1d",
+    "SYSTEM_NOTIFICATION_LABEL_SUFFIX": "_System",
+    "CHECK_FOR_UPDATES": true
+  }
+}
+```
+
+Configuration schema versions are separate from application releases. When a
+supported older schema is loaded, the script validates and migrates it before
+saving the current structure. A configuration created by newer application code
+is rejected rather than downgraded.
+
 ## Configuration Reference
+
+### User settings
 
 | Setting | Default | Purpose |
 |---|---:|---|
@@ -293,12 +341,20 @@ CHECK_FOR_UPDATES: false,
 | `NOTIFICATION_RETENTION_LABEL_SUFFIX` | `'1d'` | Retention policy applied to generated notifications |
 | `SYSTEM_NOTIFICATION_LABEL_SUFFIX` | `'_System'` | Temporary marker used to prevent notification loops |
 | `CHECK_FOR_UPDATES` | `true` | Enables GitHub release checks in generated summaries |
+
+### Internal application constants
+
+These values remain in source code because they are release-controlled behavior,
+not user preferences.
+
+| Constant | Value | Purpose |
+|---|---:|---|
 | `VERSION` | Current release | Installed semantic version displayed in notifications |
 | `PROJECT_REPOSITORY_URL` | Project repository | Repository used for notification links and release checks |
 | `UPDATE_CHECK_CACHE_SECONDS` | `21600` | GitHub response cache duration, in seconds |
 | `UNIT_ALIASES` | Built-in mapping | Maps readable unit names to canonical units |
 | `THREAD_PAGE_SIZE` | `100` | Number of labeled threads retrieved per Gmail page |
-| `TRASH_BATCH_SIZE` | `100` | Number of conversations moved to Trash per batch |
+| `TRASH_BATCH_SIZE` | `100` | Number of active messages processed per Trash batch |
 | `MAX_ROWS_PER_NOTIFICATION` | `200` | Maximum table rows in each notification email |
 | `LOCK_TIMEOUT_MS` | `5000` | Maximum time to wait for another execution to release the script lock |
 
@@ -308,13 +364,14 @@ CHECK_FOR_UPDATES: false,
 |---|---|
 | `enforceGmailRetention()` | Main retention processor; use this function for the scheduled trigger |
 | `diagnoseGmailRetentionLabels()` | Runs label setup and detailed label diagnostics without reading, relabeling, or trashing conversations |
+| `getRetentionConfiguration()` | Initializes and returns the versioned active settings without changing Gmail |
 
 ## Verbose Diagnostics
 
 Set:
 
-```javascript
-VERBOSE_LOGGING: true,
+```json
+"VERBOSE_LOGGING": true
 ```
 
 Then run:
@@ -400,7 +457,7 @@ The script requires access necessary to:
 
 - Read Gmail labels, conversations, and message metadata
 - Add and remove Gmail labels
-- Move conversations to Trash or Inbox
+- Move messages or conversations to Trash or Inbox
 - Create and send deletion-summary emails to the same account
 - Contact the public GitHub Releases API when update checks are enabled
 - Use Apps Script cache and locking services
@@ -430,7 +487,24 @@ Uninstalling the script does not restore conversations already in Trash.
 
 ## Updating
 
-1. Download the newest `gmail-retention-manager.js` file from the [latest release](https://github.com/dynamiccookies/gmail-retention-manager/releases/latest).
+### One-time migration from v0.5.0 or earlier
+
+Versions through v0.5.0 stored user choices directly in `RETENTION_CONFIG`.
+Use this migration sequence so the retention job never runs with unintended
+defaults:
+
+1. Before replacing the old source, record any customized values for the seven user settings in the configuration reference.
+2. Replace the source and save the project.
+3. Run `getRetentionConfiguration()` once. This creates the Script Property without reading, relabeling, or trashing Gmail messages.
+4. Open **Project Settings → Script Properties** and apply the recorded values inside `GMAIL_RETENTION_CONFIG`.
+5. Run `enforceGmailRetention()` and confirm the execution succeeds with the migrated settings.
+
+This manual migration is required only once; later source replacements preserve
+the project-scoped Script Property.
+
+### Routine source update
+
+1. Download the newest `gmail-retention-manager.gs` file from the [latest release](https://github.com/dynamiccookies/gmail-retention-manager/releases/latest).
 2. Replace the entire existing script in Apps Script.
 3. Save the project.
 4. Confirm that the `VERSION` value matches the downloaded release.
@@ -438,7 +512,8 @@ Uninstalling the script does not restore conversations already in Trash.
 6. Approve any newly requested permissions.
 7. Confirm that the existing scheduled trigger still targets `enforceGmailRetention()`.
 
-User configuration is stored directly in `RETENTION_CONFIG`. Record any custom settings before replacing the script, then reapply them to the new version.
+The active `GMAIL_RETENTION_CONFIG` Script Property remains separate from the
+replaced source code. Routine updates do not require settings to be reapplied.
 
 ## Contributing
 
