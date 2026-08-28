@@ -91,6 +91,13 @@
  *    direct release link. Results are cached for up to six hours, and lookup
  *    failures never interrupt retention processing or notification delivery.
  *
+ * 10. ARCHIVE_ON_LABEL is disabled by default. When enabled, each scan removes
+ *     the Inbox label from directly retention-labeled messages that are not yet
+ *     expired. This is performed at message level so unrelated messages in a
+ *     mixed conversation are not archived. This option requires the advanced
+ *     Gmail service. Disabling it stops future archiving but does not return
+ *     previously archived messages to Inbox.
+ *
  * FIRST-RUN LABELS
  * ----------------
  * At the beginning of each run, the script checks whether the configured root
@@ -143,6 +150,9 @@ const RETENTION_FACTORY_DEFAULTS = Object.freeze({
   // Top-level label containing all user-configurable retention policies.
   ROOT_LABEL: 'Retention',
 
+  // Remove directly retention-labeled messages from Inbox on the next scan.
+  ARCHIVE_ON_LABEL: false,
+
   // Child-label values created only when ROOT_LABEL does not exist at all.
   DEFAULT_RETENTION_LABEL_SUFFIXES: Object.freeze(['7d', '1m']),
 
@@ -166,7 +176,7 @@ const RETENTION_FACTORY_DEFAULTS = Object.freeze({
  * settings migrations without tying them to a particular software release.
  */
 const RETENTION_SETTINGS_PROPERTY_KEY = 'GMAIL_RETENTION_CONFIG';
-const RETENTION_SETTINGS_SCHEMA_VERSION = 1;
+const RETENTION_SETTINGS_SCHEMA_VERSION = 2;
 const RETENTION_SETTINGS_BACKUPS_PROPERTY_KEY =
   'GMAIL_RETENTION_CONFIG_BACKUPS';
 const RETENTION_SETTINGS_BACKUP_STORE_SCHEMA_VERSION = 1;
@@ -252,6 +262,11 @@ const RETENTION_CONFIG = Object.freeze({
   // Cache GitHub release results to reduce external requests. Apps Script allows
   // a maximum cache duration of 21,600 seconds (six hours).
   UPDATE_CHECK_CACHE_SECONDS: 21600,
+
+  // Message-level Inbox removal uses the advanced Gmail service because Apps
+  // Script's built-in archive methods operate only on entire conversations.
+  ARCHIVE_LIST_PAGE_SIZE: 500,
+  ARCHIVE_BATCH_SIZE: 500,
 
   // Ambiguous "m" intentionally means month. Minutes require min/mins/minute(s).
   UNIT_ALIASES: Object.freeze({
@@ -409,6 +424,9 @@ function validateRetentionSettings(settings) {
   if (typeof settings.CHECK_FOR_UPDATES !== 'boolean') {
     throw new Error('CHECK_FOR_UPDATES must be true or false.');
   }
+  if (typeof settings.ARCHIVE_ON_LABEL !== 'boolean') {
+    throw new Error('ARCHIVE_ON_LABEL must be true or false.');
+  }
   if (!Array.isArray(settings.DEFAULT_RETENTION_LABEL_SUFFIXES)) {
     throw new Error('DEFAULT_RETENTION_LABEL_SUFFIXES must be an array.');
   }
@@ -457,6 +475,7 @@ function validateRetentionSettings(settings) {
   return {
     VERBOSE_LOGGING: settings.VERBOSE_LOGGING,
     ROOT_LABEL: rootLabel,
+    ARCHIVE_ON_LABEL: settings.ARCHIVE_ON_LABEL,
     DEFAULT_RETENTION_LABEL_SUFFIXES: defaultSuffixes,
     NOTIFICATION_SUBJECT_PREFIX: settings.NOTIFICATION_SUBJECT_PREFIX.trim(),
     NOTIFICATION_RETENTION_LABEL_SUFFIX: notificationRetentionSuffix,
@@ -522,6 +541,18 @@ function migrateRetentionConfiguration(storedConfiguration) {
           settings: extractLegacyRetentionSettings(legacySettings),
         };
         schemaVersion = 1;
+        migrated = true;
+        break;
+      }
+      case 1: {
+        configuration = {
+          schemaVersion: 2,
+          settings: {
+            ...configuration.settings,
+            ARCHIVE_ON_LABEL: false,
+          },
+        };
+        schemaVersion = 2;
         migrated = true;
         break;
       }
@@ -605,6 +636,10 @@ function getRetentionSettings() {
     retentionSettingsCache = freezeRetentionSettings(validatedSettings);
 
     if (migration.migrated) {
+      createRetentionSettingsBackupFromConfiguration(
+        'application_update',
+        parsedConfiguration,
+      );
       scriptProperties.setProperty(
         RETENTION_SETTINGS_PROPERTY_KEY,
         JSON.stringify({
@@ -825,19 +860,48 @@ function saveRetentionSettingsBackupStore(backups) {
  * @return {Object} Newly created backup.
  */
 function createRetentionSettingsBackup(reason) {
+  return createRetentionSettingsBackupFromConfiguration(
+    reason,
+    getRetentionConfiguration(),
+  );
+}
+
+/**
+ * Captures a supplied stored configuration without loading active settings.
+ * This allows schema migration to preserve the pre-migration value without
+ * recursively calling getRetentionSettings().
+ *
+ * @param {string} reason Supported operation about to change the settings.
+ * @param {Object} configuration Versioned or legacy stored configuration.
+ * @return {Object} Newly created backup.
+ */
+function createRetentionSettingsBackupFromConfiguration(reason, configuration) {
   if (!RETENTION_SETTINGS_BACKUP_REASONS.includes(reason)) {
     throw new Error(`Unsupported settings-backup reason: ${reason}.`);
   }
+  if (!isConfigurationObject(configuration)) {
+    throw new Error('Settings backup configuration must be an object.');
+  }
 
   const store = getRetentionSettingsBackupStore(true);
-  const configuration = getRetentionConfiguration();
+  const schemaVersion = configuration.schemaVersion === undefined
+    ? 0
+    : configuration.schemaVersion;
+  const versionedConfiguration = configuration.schemaVersion === undefined
+    ? {
+        schemaVersion: 0,
+        settings: isConfigurationObject(configuration.settings)
+          ? configuration.settings
+          : extractLegacyRetentionSettings(configuration),
+      }
+    : configuration;
   const backup = validateRetentionSettingsBackup({
     id: Utilities.getUuid(),
     createdAt: new Date().toISOString(),
     reason,
     applicationVersion: RETENTION_CONFIG.VERSION,
-    configurationSchemaVersion: configuration.schemaVersion,
-    configuration,
+    configurationSchemaVersion: schemaVersion,
+    configuration: versionedConfiguration,
   });
 
   saveRetentionSettingsBackupStore([backup, ...store.backups]);
@@ -1447,7 +1511,7 @@ function assertAdminOwnerAccess() {
 function doGet() {
   assertAdminOwnerAccess();
 
-  return HtmlService.createHtmlOutputFromFile('Admin')
+  return HtmlService.createHtmlOutputFromFile('admin')
     .setTitle('Gmail Retention Manager')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
@@ -2334,6 +2398,16 @@ function enforceGmailRetention() {
       stateChanges.lastSuccessfulResult = completedResult;
     }
 
+    const operationErrors = Array.isArray(result.operationErrors)
+      ? result.operationErrors.filter(
+          message => typeof message === 'string' && message.trim(),
+        )
+      : [];
+    if (operationErrors.length > 0) {
+      stateChanges.lastErrorAt = completedAt.toISOString();
+      stateChanges.lastErrorMessage = operationErrors.join(' ').slice(0, 2000);
+    }
+
     updateRetentionRuntimeStateSafely(stateChanges);
     return completedResult;
   } catch (error) {
@@ -2383,6 +2457,7 @@ function executeGmailRetention_() {
           getNotificationRetentionLabelName(),
         systemNotificationLabel:
           getSystemNotificationLabelName(),
+        archiveOnLabel: settings.ARCHIVE_ON_LABEL,
       },
     });
 
@@ -2424,6 +2499,12 @@ function executeGmailRetention_() {
         movedConversationCount: 0,
         reportedMessageCount: 0,
         removedRetentionLabelCount: 0,
+        archiveOnLabelEnabled: settings.ARCHIVE_ON_LABEL,
+        archivedMessageCount: 0,
+        archivedConversationCount: 0,
+        archiveLookupFailureCount: 0,
+        archiveFailedMessageCount: 0,
+        operationErrors: [],
         summaryEmailCount: 0,
       };
     }
@@ -2441,6 +2522,7 @@ function executeGmailRetention_() {
     );
     verboseLog('THREAD COLLECTION', `Collected ${threadMap.size} unique thread(s).`);
     const pendingDeletions = [];
+    const excludedArchiveMessageIds = new Set();
     let removedRetentionLabelCount = 0;
 
     for (const thread of threadMap.values()) {
@@ -2458,6 +2540,11 @@ function executeGmailRetention_() {
 
       const messages = thread.getMessages();
       const activeMessages = messages.filter(message => !message.isInTrash());
+      if (isSystemNotification) {
+        activeMessages.forEach(message => {
+          excludedArchiveMessageIds.add(message.getId());
+        });
+      }
       verboseLog('THREAD MESSAGES', {
         threadId: thread.getId(),
         messageCount: messages.length,
@@ -2594,8 +2681,17 @@ function executeGmailRetention_() {
         messageRecords,
         isSystemNotification,
       });
+      activeMessages.forEach(message => {
+        excludedArchiveMessageIds.add(message.getId());
+      });
     }
 
+    const archiveResult = settings.ARCHIVE_ON_LABEL
+      ? archiveRetentionLabeledInboxMessages(
+          discoveredRetentionLabels,
+          excludedArchiveMessageIds,
+        )
+      : createEmptyArchiveResult();
     const deletionResult = movePendingMessagesToTrash(pendingDeletions);
     const deletedMessageRecords = deletionResult.deletedMessageRecords;
 
@@ -2617,6 +2713,12 @@ function executeGmailRetention_() {
       movedConversationCount: deletionResult.movedThreadCount,
       reportedMessageCount: deletedMessageRecords.length,
       removedRetentionLabelCount,
+      archiveOnLabelEnabled: settings.ARCHIVE_ON_LABEL,
+      archivedMessageCount: archiveResult.archivedMessageCount,
+      archivedConversationCount: archiveResult.archivedConversationCount,
+      archiveLookupFailureCount: archiveResult.lookupFailureCount,
+      archiveFailedMessageCount: archiveResult.failedMessageCount,
+      operationErrors: archiveResult.errors,
       summaryEmailCount,
     };
 
@@ -2626,6 +2728,12 @@ function executeGmailRetention_() {
         `from ${result.movedConversationCount} conversation(s).`,
       `Reported ${result.reportedMessageCount} deleted message(s).`,
       `Removed ${result.removedRetentionLabelCount} redundant retention label(s).`,
+      settings.ARCHIVE_ON_LABEL
+        ? `Archived ${result.archivedMessageCount} labeled Inbox message(s) ` +
+          `from ${result.archivedConversationCount} conversation(s). ` +
+          `Archive warnings: ${result.archiveLookupFailureCount} lookup ` +
+          `failure(s), ${result.archiveFailedMessageCount} message move failure(s).`
+        : 'Archive-on-label is disabled.',
     ].join(' '));
 
     return result;
@@ -3248,6 +3356,168 @@ function buildNotificationSubject(
   const subjectBody = `${formatMessageCount(totalMessageCount)} deleted${partSuffix}`;
 
   return prefix ? `${prefix} ${subjectBody}` : subjectBody;
+}
+
+/** @return {Object} Empty message-level archive outcome. */
+function createEmptyArchiveResult() {
+  return {
+    archivedMessageCount: 0,
+    archivedConversationCount: 0,
+    lookupFailureCount: 0,
+    failedMessageCount: 0,
+    errors: [],
+  };
+}
+
+/**
+ * Lists messages that directly carry one retention label and the Inbox system
+ * label. Using the Gmail API avoids treating every message in a mixed thread as
+ * though it carries the same user label.
+ *
+ * @param {string} labelId Gmail user-label ID.
+ * @return {Array<{id: string, threadId: string}>} Directly labeled messages.
+ */
+function listInboxMessagesForRetentionLabel(labelId) {
+  const messages = [];
+  let pageToken = null;
+
+  do {
+    const options = {
+      labelIds: [labelId, 'INBOX'],
+      maxResults: RETENTION_CONFIG.ARCHIVE_LIST_PAGE_SIZE,
+      includeSpamTrash: false,
+      fields: 'messages(id,threadId),nextPageToken',
+    };
+    if (pageToken) {
+      options.pageToken = pageToken;
+    }
+
+    const payload = Gmail.Users.Messages.list('me', options) || {};
+
+    if (Array.isArray(payload.messages)) {
+      payload.messages.forEach(message => {
+        if (
+          isConfigurationObject(message) &&
+          typeof message.id === 'string' &&
+          message.id &&
+          typeof message.threadId === 'string' &&
+          message.threadId
+        ) {
+          messages.push({ id: message.id, threadId: message.threadId });
+        }
+      });
+    }
+    pageToken = typeof payload.nextPageToken === 'string' &&
+      payload.nextPageToken
+      ? payload.nextPageToken
+      : null;
+  } while (pageToken);
+
+  return messages;
+}
+
+/**
+ * Removes the Inbox system label from directly retention-labeled messages.
+ * Expired messages and generated system notifications are excluded by caller so
+ * they can follow their existing Trash and notification paths unchanged.
+ * Lookup or modification failures are reported but do not block retention.
+ *
+ * @param {Array} retentionPolicies Discovered valid retention-label policies.
+ * @param {Set<string>} excludedMessageIds Messages that must not be archived.
+ * @return {Object} Successful archive counts and nonfatal failure counts.
+ */
+function archiveRetentionLabeledInboxMessages(
+  retentionPolicies,
+  excludedMessageIds,
+) {
+  const result = createEmptyArchiveResult();
+  const uniqueLabels = new Map();
+
+  retentionPolicies.forEach(policy => {
+    if (policy && policy.label) {
+      uniqueLabels.set(policy.label.getId(), policy.labelName);
+    }
+  });
+  if (uniqueLabels.size === 0) {
+    return result;
+  }
+
+  if (
+    typeof Gmail === 'undefined' ||
+    !Gmail.Users ||
+    !Gmail.Users.Messages
+  ) {
+    result.lookupFailureCount = uniqueLabels.size;
+    const message =
+      'Archive-on-label could not run because the advanced Gmail service is ' +
+      'not enabled for this Apps Script project.';
+    result.errors.push(message);
+    console.error(message);
+    return result;
+  }
+
+  const candidateMessages = new Map();
+  for (const [labelId, labelName] of uniqueLabels.entries()) {
+    try {
+      const messages = listInboxMessagesForRetentionLabel(labelId);
+      messages.forEach(message => {
+        if (!excludedMessageIds.has(message.id)) {
+          candidateMessages.set(message.id, message);
+        }
+      });
+      verboseLog('ARCHIVE LABEL LOOKUP', {
+        labelName,
+        directlyLabeledInboxMessageCount: messages.length,
+      });
+    } catch (error) {
+      result.lookupFailureCount += 1;
+      const message =
+        `Unable to evaluate Inbox messages for ${labelName}: ${error.message}`;
+      result.errors.push(message);
+      console.error(message);
+    }
+  }
+
+  const candidates = [...candidateMessages.values()];
+  const archivedThreadIds = new Set();
+  for (
+    let index = 0;
+    index < candidates.length;
+    index += RETENTION_CONFIG.ARCHIVE_BATCH_SIZE
+  ) {
+    const batch = candidates.slice(
+      index,
+      index + RETENTION_CONFIG.ARCHIVE_BATCH_SIZE,
+    );
+
+    try {
+      Gmail.Users.Messages.batchModify(
+        {
+          ids: batch.map(message => message.id),
+          removeLabelIds: ['INBOX'],
+        },
+        'me',
+      );
+
+      result.archivedMessageCount += batch.length;
+      batch.forEach(message => archivedThreadIds.add(message.threadId));
+      verboseLog('ARCHIVE BATCH', {
+        batchSize: batch.length,
+        messageIds: batch.map(message => message.id),
+        threadIds: [...new Set(batch.map(message => message.threadId))],
+      });
+    } catch (error) {
+      result.failedMessageCount += batch.length;
+      const message =
+        `Unable to archive ${batch.length} retention-labeled message(s): ` +
+          error.message;
+      result.errors.push(message);
+      console.error(message);
+    }
+  }
+
+  result.archivedConversationCount = archivedThreadIds.size;
+  return result;
 }
 
 /**
