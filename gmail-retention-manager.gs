@@ -4,7 +4,7 @@
  *
  * Repository: https://github.com/dynamiccookies/gmail-retention-manager
  *
- * Version: 0.5.0
+ * Version: 0.6.0
  *
  * PURPOSE
  * -------
@@ -261,7 +261,7 @@ const RETENTION_SCHEDULE_FREQUENCIES = Object.freeze({
 const RETENTION_CONFIG = Object.freeze({
 
   // Displayed in notification footers and linked to the matching GitHub release.
-  VERSION: '0.5.0',
+  VERSION: '0.6.0',
   PROJECT_REPOSITORY_URL:
     'https://github.com/dynamiccookies/gmail-retention-manager',
 
