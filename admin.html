@@ -274,6 +274,17 @@
         color: var(--danger-message-text);
       }
 
+      .update-available-notice {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+      }
+
+      .update-available-notice p {
+        margin: 3px 0 0;
+      }
+
       .dashboard-grid {
         display: grid;
         grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -1013,7 +1024,8 @@
         }
 
         .topbar,
-        .run-panel {
+        .run-panel,
+        .update-available-notice {
           align-items: stretch;
           flex-direction: column;
         }
@@ -1264,6 +1276,27 @@
         it off afterward.
       </div>
 
+      <div
+        class="notice notice-warning update-available-notice"
+        id="updateAvailableNotice"
+        role="status"
+        hidden
+      >
+        <div>
+          <strong id="updateAvailableTitle"></strong>
+          <p id="updateAvailableDetail"></p>
+        </div>
+        <a
+          class="button button-primary"
+          id="updateAvailableLink"
+          href="#"
+          target="_blank"
+          rel="noopener"
+        >
+          View latest release
+        </a>
+      </div>
+
       <section class="dashboard-grid" aria-label="Application status">
         <article class="card">
           <p class="card-label">Status</p>
@@ -1361,8 +1394,8 @@
                   name="scheduleTimeZone"
                 ></select>
                 <p class="help">
-                  Used for the daily trigger, dashboard timestamps, and summary
-                  email timestamps. Select a supported time zone from the list.
+                  Used for the daily trigger, dashboard timestamps, and
+                  notification email timestamps. Select a supported time zone.
                 </p>
                 <p class="field-error" id="scheduleTimeZoneError"></p>
               </div>
@@ -1479,8 +1512,9 @@
                   Disabled by default. When enabled, the next scan removes only
                   directly retention-labeled messages from Inbox. Their Trash
                   deadline does not change, unrelated messages in the same
-                  conversation remain in Inbox, and generated summary emails are
-                  excluded. Turning this off does not return archived messages.
+                  conversation remain in Inbox, and generated notification
+                  emails are excluded. Turning this off does not return archived
+                  messages.
                 </p>
               </div>
               <label class="switch" aria-label="Archive retention-labeled messages">
@@ -1491,18 +1525,18 @@
           </div>
         </details>
 
-        <details class="panel collapsible-panel" id="summaryEmailSettingsPanel">
+        <details class="panel collapsible-panel" id="notificationEmailSettingsPanel">
           <summary class="panel-header">
             <div>
-              <h2>Summary email settings</h2>
-              <p>Control the email sent after messages are moved to Trash.</p>
+              <h2>Email notification settings</h2>
+              <p>Control deletion-summary and update-only notification emails.</p>
             </div>
           </summary>
 
           <div class="panel-body">
             <div class="form-grid">
               <div class="field">
-                <label for="subjectPrefix">Summary email subject prefix</label>
+                <label for="subjectPrefix">Notification email subject prefix</label>
                 <div class="composite-input">
                   <input id="subjectPrefix" name="subjectPrefix" type="text" autocomplete="off">
                   <span class="composite-suffix" aria-hidden="true">
@@ -1511,18 +1545,18 @@
                   </span>
                 </div>
                 <p class="help">
-                  Edit only the prefix. The shaded message count is example
-                  data and changes to match each summary email.
+                  Edit only the prefix. It applies to deletion summaries and
+                  update-only notices; the shaded text is example summary data.
                 </p>
                 <p class="field-error" id="subjectPrefixError"></p>
               </div>
 
               <div class="field">
-                <label for="notificationRetention">Summary email retention period</label>
+                <label for="notificationRetention">Notification email retention period</label>
                 <input id="notificationRetention" name="notificationRetention" type="text" autocomplete="off">
                 <p class="help">
-                  Controls how long each generated summary email remains before
-                  it becomes eligible to move to Trash.
+                  Controls how long generated deletion summaries and update-only
+                  notices remain before becoming eligible to move to Trash.
                 </p>
                 <p class="field-error" id="notificationRetentionError"></p>
               </div>
@@ -1544,8 +1578,8 @@
               <div class="switch-copy">
                 <label class="switch-label" for="checkForUpdates">Check for updates</label>
                 <p class="help">
-                  Check the latest published GitHub release when a deletion
-                  summary email is generated.
+                  Check the latest published GitHub release during every scan
+                  and on the admin page.
                 </p>
               </div>
               <label class="switch" aria-label="Check for updates">
@@ -1574,7 +1608,7 @@
               <label for="systemLabel">System-notification label</label>
               <input id="systemLabel" name="systemLabel" type="text" autocomplete="off">
               <p class="help">
-                Internal child label used to prevent summary-email loops.
+                Internal child label used to prevent notification-email loops.
               </p>
               <p class="field-error" id="systemLabelError"></p>
 
@@ -1707,6 +1741,8 @@
           'backupDeleteDescription', 'cancelBackupDeleteButton',
           'confirmBackupDeleteButton',
           'ownerText', 'versionPill', 'globalNotice', 'verboseNotice',
+          'updateAvailableNotice', 'updateAvailableTitle',
+          'updateAvailableDetail', 'updateAvailableLink',
           'statusPill', 'statusDetail', 'scheduleValue', 'scheduleDetail',
           'scheduleSettingsPanel', 'scheduleForm', 'scheduleEnabled',
           'scheduleFrequency', 'scheduleFrequencyError',
@@ -1911,6 +1947,27 @@
         updateDirtyState();
       }
 
+      function renderAvailableUpdate(availableUpdate, updateChecksEnabled) {
+        const shouldShow = Boolean(updateChecksEnabled && availableUpdate);
+        elements.updateAvailableNotice.hidden = !shouldShow;
+
+        if (!shouldShow) {
+          elements.updateAvailableTitle.textContent = '';
+          elements.updateAvailableDetail.textContent = '';
+          elements.updateAvailableLink.removeAttribute('href');
+          return;
+        }
+
+        elements.updateAvailableTitle.textContent =
+          `Gmail Retention Manager v${availableUpdate.version} is available`;
+        elements.updateAvailableDetail.textContent =
+          `Installed version: v${applicationData.version}. Review the latest ` +
+          'GitHub release and update manually.';
+        elements.updateAvailableLink.href = availableUpdate.releaseUrl;
+        elements.updateAvailableLink.textContent =
+          `View v${availableUpdate.version} release`;
+      }
+
       function renderSettings(settings) {
         elements.rootLabel.value = settings.ROOT_LABEL;
         elements.archiveOnLabel.checked = settings.ARCHIVE_ON_LABEL;
@@ -1925,6 +1982,10 @@
         elements.rootLabelAcknowledgement.checked = false;
         elements.systemLabelAcknowledgement.checked = false;
         elements.verboseNotice.hidden = !settings.VERBOSE_LOGGING;
+        renderAvailableUpdate(
+          applicationData ? applicationData.availableUpdate : null,
+          settings.CHECK_FOR_UPDATES,
+        );
         clearValidationErrors();
       }
 
@@ -2269,9 +2330,9 @@
             'Starter retention labels',
             settings.DEFAULT_RETENTION_LABEL_SUFFIXES.join(', '),
           ],
-          ['Summary email subject prefix', settings.NOTIFICATION_SUBJECT_PREFIX],
+          ['Notification email subject prefix', settings.NOTIFICATION_SUBJECT_PREFIX],
           [
-            'Summary email retention period',
+            'Notification email retention period',
             settings.NOTIFICATION_RETENTION_LABEL_SUFFIX,
           ],
           ['Check for updates', settings.CHECK_FOR_UPDATES ? 'On' : 'Off'],
@@ -2405,6 +2466,7 @@
         google.script.run
           .withSuccessHandler(response => {
             initialSettings = clone(response.settings);
+            applicationData.availableUpdate = response.availableUpdate || null;
             renderSettings(response.settings);
             renderSettingsBackups(response.backups);
             updateWarnings();
@@ -2964,6 +3026,7 @@
         const reviewed = Number(result.reviewedConversationCount || 0);
         const moved = Number(result.movedMessageCount || 0);
         const summaries = Number(result.summaryEmailCount || 0);
+        const updateOnlyEmails = Number(result.updateOnlyEmailCount || 0);
         const archived = Number(result.archivedMessageCount || 0);
         const archivedConversations = Number(
           result.archivedConversationCount || 0,
@@ -2984,7 +3047,8 @@
           archiveText +
           archiveWarningText +
           `moved ${moved} message(s); ` +
-          `sent ${summaries} summary email(s).`;
+          `sent ${summaries} deletion summary email(s); ` +
+          `sent ${updateOnlyEmails} update-only email(s).`;
       }
 
       function formatRunDuration(startedAt, completedAt) {
@@ -3260,6 +3324,7 @@
         google.script.run
           .withSuccessHandler(response => {
             initialSettings = clone(response.settings);
+            applicationData.availableUpdate = response.availableUpdate || null;
             renderSettings(response.settings);
             renderSettingsBackups(response.backups);
             updateWarnings();
@@ -3432,6 +3497,13 @@
             hideScanProgress();
             updateDirtyState();
             const result = response.result;
+            if (Object.prototype.hasOwnProperty.call(result, 'availableUpdate')) {
+              applicationData.availableUpdate = result.availableUpdate;
+              renderAvailableUpdate(
+                result.availableUpdate,
+                initialSettings.CHECK_FOR_UPDATES,
+              );
+            }
             const archiveFailures =
               Number(result.archiveLookupFailureCount || 0) +
               Number(result.archiveFailedMessageCount || 0);
@@ -3444,12 +3516,16 @@
               ? ` ${archiveFailures} archive operation warning(s) occurred. ` +
                 'See Last Recorded Error for details.'
               : '';
+            const updateEmailText = Number(result.updateOnlyEmailCount || 0) > 0
+              ? ` Sent ${result.updateOnlyEmailCount} update-only email(s).`
+              : '';
             showNotice(
               result.status === 'skipped'
                 ? result.reason
                 : `Scan complete. Reviewed ${result.reviewedConversationCount || 0} ` +
                   `conversation(s) and moved ${result.movedMessageCount || 0} ` +
-                  `message(s).${archiveText}${archiveWarningText}`,
+                  `message(s).${archiveText}${archiveWarningText}` +
+                  updateEmailText,
               result.status === 'skipped' || archiveFailures > 0
                 ? 'warning'
                 : 'success',
