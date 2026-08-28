@@ -655,6 +655,145 @@
         margin-top: 18px;
       }
 
+      .backup-list {
+        display: grid;
+        gap: 12px;
+      }
+
+      .backup-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        margin-bottom: 16px;
+      }
+
+      .backup-toolbar .help {
+        max-width: 720px;
+      }
+
+      .backup-item {
+        padding: 16px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface-muted);
+      }
+
+      .backup-item-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      .backup-item h3 {
+        margin-bottom: 3px;
+      }
+
+      .backup-item-actions {
+        display: flex;
+        flex: 0 0 auto;
+        gap: 8px;
+      }
+
+      .backup-metadata {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 10px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .backup-empty {
+        margin: 0;
+        padding: 18px;
+        border: 1px dashed var(--border);
+        border-radius: 10px;
+        color: var(--muted);
+        text-align: center;
+      }
+
+      .backup-retention-note {
+        margin-top: 14px;
+      }
+
+      .backup-restore-card {
+        width: min(680px, 100%);
+        max-height: calc(100vh - 48px);
+        overflow-y: auto;
+        text-align: left;
+      }
+
+      .backup-review-metadata {
+        margin-bottom: 18px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .backup-preview {
+        display: grid;
+        margin: 0;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        overflow: hidden;
+      }
+
+      .backup-preview-row {
+        display: grid;
+        grid-template-columns: minmax(190px, 0.8fr) minmax(0, 1.2fr);
+        gap: 16px;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .backup-preview-row:last-child {
+        border-bottom: 0;
+      }
+
+      .backup-preview dt,
+      .backup-preview dd {
+        margin: 0;
+        overflow-wrap: anywhere;
+      }
+
+      .backup-preview dt {
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .backup-preview dd {
+        font-family: Consolas, "Courier New", monospace;
+        font-size: 13px;
+      }
+
+      .backup-restore-warning {
+        margin-top: 18px;
+      }
+
+      .backup-confirmation {
+        display: flex;
+        align-items: flex-start;
+        gap: 9px;
+        margin-top: 16px;
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .backup-confirmation input {
+        width: 18px;
+        height: 18px;
+        flex: 0 0 auto;
+        margin: 1px 0 0;
+      }
+
+      .backup-restore-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: 20px;
+      }
+
       .actions {
         position: sticky;
         bottom: 0;
@@ -703,6 +842,16 @@
 
       .button-secondary:hover:not(:disabled) {
         background: var(--secondary-hover);
+      }
+
+      .button-danger {
+        border-color: var(--danger-border);
+        background: var(--danger-soft);
+        color: var(--danger-message-text);
+      }
+
+      .button-danger:hover:not(:disabled) {
+        filter: brightness(1.08);
       }
 
       .loading-screen,
@@ -895,6 +1044,25 @@
           flex-wrap: wrap;
         }
 
+        .backup-toolbar,
+        .backup-item-header,
+        .backup-item-actions,
+        .backup-restore-actions {
+          align-items: stretch;
+          flex-direction: column;
+        }
+
+        .backup-toolbar .button,
+        .backup-item-actions .button,
+        .backup-restore-actions .button {
+          width: 100%;
+        }
+
+        .backup-preview-row {
+          grid-template-columns: 1fr;
+          gap: 3px;
+        }
+
         .actions .unsaved,
         .schedule-form-actions .unsaved {
           width: 100%;
@@ -979,6 +1147,85 @@
             until the scan finishes and the results appear.
           </p>
           <p class="scan-elapsed" id="scanElapsed">Elapsed time: 0:00</p>
+        </div>
+      </div>
+    </section>
+
+    <section
+      class="scan-progress-overlay"
+      id="backupRestoreOverlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="backupRestoreTitle"
+      aria-describedby="backupRestoreDescription backupRestoreWarning"
+      tabindex="-1"
+      hidden
+    >
+      <div class="scan-progress-card backup-restore-card">
+        <p class="eyebrow">Settings backup review</p>
+        <h2 id="backupRestoreTitle">Restore this settings backup?</h2>
+        <p id="backupRestoreDescription" class="backup-review-metadata"></p>
+        <dl class="backup-preview" id="backupPreview"></dl>
+        <div
+          class="warning-box backup-restore-warning"
+          id="backupRestoreWarning"
+        ></div>
+        <label class="backup-confirmation">
+          <input id="backupRestoreAcknowledgement" type="checkbox">
+          <span id="backupRestoreAcknowledgementText">
+            I understand these saved settings will replace the current settings.
+          </span>
+        </label>
+        <div class="backup-restore-actions">
+          <button
+            class="button button-secondary"
+            id="cancelBackupRestoreButton"
+            type="button"
+          >
+            Cancel
+          </button>
+          <button
+            class="button button-primary"
+            id="confirmBackupRestoreButton"
+            type="button"
+            disabled
+          >
+            Restore backup
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section
+      class="scan-progress-overlay"
+      id="backupDeleteOverlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="backupDeleteTitle"
+      aria-describedby="backupDeleteDescription"
+      tabindex="-1"
+      hidden
+    >
+      <div class="scan-progress-card">
+        <div class="scan-confirmation-icon" aria-hidden="true">!</div>
+        <p class="eyebrow">Permanent backup deletion</p>
+        <h2 id="backupDeleteTitle">Delete this settings backup?</h2>
+        <p class="scan-progress-description" id="backupDeleteDescription"></p>
+        <div class="scan-confirmation-actions">
+          <button
+            class="button button-secondary"
+            id="cancelBackupDeleteButton"
+            type="button"
+          >
+            Cancel
+          </button>
+          <button
+            class="button button-danger"
+            id="confirmBackupDeleteButton"
+            type="button"
+          >
+            Delete backup
+          </button>
         </div>
       </div>
     </section>
@@ -1317,16 +1564,65 @@
           </div>
         </details>
 
-        <div class="actions">
-          <span class="unsaved" id="unsavedText" hidden>Unsaved changes</span>
-          <button class="button button-secondary" id="discardButton" type="button" disabled>
-            Discard
-          </button>
-          <button class="button button-primary" id="saveButton" type="submit" disabled>
-            Save changes
-          </button>
-        </div>
       </form>
+
+      <details class="panel collapsible-panel" id="settingsBackupsPanel">
+        <summary class="panel-header">
+          <div>
+            <h2>Settings backups</h2>
+            <p>Review and restore the five most recent saved configurations.</p>
+          </div>
+        </summary>
+
+        <div class="panel-body">
+          <div class="backup-toolbar">
+            <p class="help">
+              Importing validates and adds a JSON backup here without changing
+              the active settings. Review it before choosing Restore.
+            </p>
+            <input
+              id="backupImportInput"
+              type="file"
+              accept="application/json,.json"
+              hidden
+            >
+            <button
+              class="button button-secondary"
+              id="importBackupButton"
+              type="button"
+            >
+              Import backup
+            </button>
+          </div>
+          <div
+            class="notice notice-warning"
+            id="backupStorageWarning"
+            hidden
+          ></div>
+          <p class="backup-empty" id="backupEmptyMessage" hidden>
+            No backups exist yet. The first backup will be created immediately
+            before you save a settings change.
+          </p>
+          <div class="backup-list" id="backupList"></div>
+          <p class="help backup-retention-note" id="backupRetentionNote"></p>
+        </div>
+      </details>
+
+      <div class="actions">
+        <span class="unsaved" id="unsavedText" hidden>Unsaved changes</span>
+        <button class="button button-secondary" id="discardButton" type="button" disabled>
+          Discard
+        </button>
+        <button
+          class="button button-primary"
+          id="saveButton"
+          type="submit"
+          form="settingsForm"
+          disabled
+        >
+          Save changes
+        </button>
+      </div>
 
       <footer class="metadata resource-footer">
         <span>Settings are stored privately with this Apps Script installation.</span>
@@ -1357,6 +1653,12 @@
       let dirty = false;
       let scheduleBusy = false;
       let scheduleDirty = false;
+      let backupBusy = false;
+      let settingsBackups = { limit: 5, warning: null, items: [] };
+      let selectedBackup = null;
+      let backupReviewReturnFocus = null;
+      let pendingDeleteBackup = null;
+      let backupDeleteReturnFocus = null;
       let persistedTheme = 'dark';
       let pendingTheme = null;
       let themeSaveTimer = null;
@@ -1371,6 +1673,14 @@
           'loadingScreen', 'fatalScreen', 'fatalMessage', 'retryButton', 'app',
           'scanProgressOverlay', 'scanConfirmationView', 'scanProgressView',
           'cancelScanButton', 'confirmScanButton', 'scanElapsed',
+          'backupRestoreOverlay', 'backupRestoreTitle',
+          'backupRestoreDescription', 'backupPreview', 'backupRestoreWarning',
+          'backupRestoreAcknowledgement',
+          'backupRestoreAcknowledgementText', 'cancelBackupRestoreButton',
+          'confirmBackupRestoreButton',
+          'backupDeleteOverlay', 'backupDeleteTitle',
+          'backupDeleteDescription', 'cancelBackupDeleteButton',
+          'confirmBackupDeleteButton',
           'ownerText', 'versionPill', 'globalNotice', 'verboseNotice',
           'statusPill', 'statusDetail', 'scheduleValue', 'scheduleDetail',
           'scheduleSettingsPanel', 'scheduleForm', 'scheduleEnabled',
@@ -1391,7 +1701,10 @@
           'notificationRetentionError', 'checkForUpdates', 'verboseLogging',
           'systemLabel', 'systemLabelError', 'systemLabelWarning',
           'systemLabelAcknowledgement', 'unsavedText',
-          'discardButton', 'saveButton', 'repositoryLink', 'releasesLink',
+          'discardButton', 'saveButton', 'settingsBackupsPanel',
+          'backupStorageWarning', 'backupEmptyMessage', 'backupList',
+          'backupRetentionNote', 'backupImportInput', 'importBackupButton',
+          'repositoryLink', 'releasesLink',
         ].forEach(id => {
           elements[id] = document.getElementById(id);
         });
@@ -1408,6 +1721,43 @@
           'keydown',
           handleScanModalKeydown,
         );
+        elements.backupList.addEventListener('click', handleBackupListClick);
+        elements.backupRestoreAcknowledgement.addEventListener(
+          'change',
+          updateBackupRestoreButton,
+        );
+        elements.cancelBackupRestoreButton.addEventListener(
+          'click',
+          closeBackupRestoreReview,
+        );
+        elements.confirmBackupRestoreButton.addEventListener(
+          'click',
+          restoreSelectedBackup,
+        );
+        elements.backupRestoreOverlay.addEventListener(
+          'keydown',
+          handleBackupRestoreKeydown,
+        );
+        elements.cancelBackupDeleteButton.addEventListener(
+          'click',
+          closeBackupDeleteConfirmation,
+        );
+        elements.confirmBackupDeleteButton.addEventListener(
+          'click',
+          deleteSelectedBackup,
+        );
+        elements.backupDeleteOverlay.addEventListener(
+          'keydown',
+          handleBackupDeleteKeydown,
+        );
+        elements.importBackupButton.addEventListener(
+          'click',
+          () => elements.backupImportInput.click(),
+        );
+        elements.backupImportInput.addEventListener(
+          'change',
+          importSelectedBackupFile,
+        );
         elements.scheduleForm.addEventListener('submit', saveSchedule);
         elements.scheduleForm.addEventListener('input', handleScheduleChange);
         elements.scheduleForm.addEventListener('change', handleScheduleChange);
@@ -1418,7 +1768,7 @@
         elements.settingsForm.addEventListener('input', handleFormChange);
         elements.settingsForm.addEventListener('change', handleFormChange);
         window.addEventListener('beforeunload', event => {
-          if (!dirty && !scheduleDirty && !scanInProgress) {
+          if (!dirty && !scheduleDirty && !scanInProgress && !backupBusy) {
             return;
           }
           event.preventDefault();
@@ -1531,6 +1881,7 @@
         renderRuntime(data.runtime);
         renderTrigger(data.trigger);
         renderScheduleForm(data.trigger);
+        renderSettingsBackups(data.backups);
         updateDirtyState();
       }
 
@@ -1548,6 +1899,525 @@
         elements.systemLabelAcknowledgement.checked = false;
         elements.verboseNotice.hidden = !settings.VERBOSE_LOGGING;
         clearValidationErrors();
+      }
+
+      function renderSettingsBackups(backups) {
+        settingsBackups = backups && Array.isArray(backups.items)
+          ? clone(backups)
+          : { limit: 5, warning: null, items: [] };
+        elements.backupList.textContent = '';
+        elements.backupStorageWarning.hidden = !settingsBackups.warning;
+        elements.backupStorageWarning.textContent = settingsBackups.warning || '';
+        elements.backupEmptyMessage.hidden = settingsBackups.items.length > 0;
+        elements.backupRetentionNote.textContent =
+          `Up to ${settingsBackups.limit || 5} backups are retained. Restoring ` +
+          'a backup first preserves the current settings. Schedule settings are ' +
+          'managed separately and are not changed by a restore. Adding another ' +
+          'backup when the list is full removes the oldest one.';
+
+        settingsBackups.items.forEach(backup => {
+          const item = document.createElement('article');
+          item.className = 'backup-item';
+
+          const header = document.createElement('div');
+          header.className = 'backup-item-header';
+
+          const copy = document.createElement('div');
+          const title = document.createElement('h3');
+          title.textContent = formatTimestamp(backup.createdAt);
+          const metadata = document.createElement('div');
+          metadata.className = 'backup-metadata';
+          [
+            `Created before: ${getBackupReasonLabel(backup.reason)}`,
+            ...(backup.importedAt
+              ? [`Imported ${formatTimestamp(backup.importedAt)}`]
+              : []),
+            `App v${backup.applicationVersion}`,
+            `Settings schema ${backup.configurationSchemaVersion}`,
+          ].forEach(value => {
+            const span = document.createElement('span');
+            span.textContent = value;
+            metadata.appendChild(span);
+          });
+          copy.append(title, metadata);
+
+          const actions = document.createElement('div');
+          actions.className = 'backup-item-actions';
+          [
+            ['Review', 'review', 'button button-secondary'],
+            ['Download', 'download', 'button button-secondary'],
+            ['Delete', 'delete', 'button button-danger'],
+          ].forEach(([label, action, className]) => {
+            const button = document.createElement('button');
+            button.className = className;
+            button.type = 'button';
+            button.dataset.backupId = backup.id;
+            button.dataset.backupAction = action;
+            button.textContent = label;
+            actions.appendChild(button);
+          });
+
+          header.append(copy, actions);
+          item.appendChild(header);
+          elements.backupList.appendChild(item);
+        });
+
+        updateBackupReviewControls();
+      }
+
+      function getBackupReasonLabel(reason) {
+        const labels = {
+          settings_change: 'settings change',
+          restore: 'another restore',
+          import: 'settings import',
+          factory_reset: 'factory reset',
+          application_update: 'application update',
+        };
+        return labels[reason] || 'settings operation';
+      }
+
+      function downloadSettingsBackup(backup) {
+        const exportData = {
+          fileType: 'gmail-retention-manager-settings-backup',
+          exportSchemaVersion: 1,
+          exportedAt: new Date().toISOString(),
+          backup: {
+            id: backup.id,
+            createdAt: backup.createdAt,
+            importedAt: backup.importedAt || null,
+            reason: backup.reason,
+            applicationVersion: backup.applicationVersion,
+            configurationSchemaVersion: backup.configurationSchemaVersion,
+            configuration: {
+              schemaVersion: backup.configurationSchemaVersion,
+              settings: clone(backup.settings),
+            },
+          },
+        };
+        const blob = new Blob(
+          [JSON.stringify(exportData, null, 2)],
+          { type: 'application/json' },
+        );
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        const timestamp = backup.createdAt.replace(/[:.]/g, '-');
+        link.href = url;
+        link.download =
+          `gmail-retention-manager-settings-backup-${timestamp}.json`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 0);
+        showNotice('Settings backup downloaded.', 'success');
+      }
+
+      function importSelectedBackupFile(event) {
+        const file = event.target.files && event.target.files[0];
+        elements.backupImportInput.value = '';
+        if (!file || backupBusy) {
+          return;
+        }
+        if (dirty || scheduleDirty) {
+          showNotice(
+            'Save or discard all unsaved changes before importing a backup.',
+            'error',
+          );
+          return;
+        }
+        if (file.size > 100000) {
+          showNotice('The selected backup file is unexpectedly large.', 'error');
+          return;
+        }
+
+        const reader = new FileReader();
+        setBackupImportBusy(true);
+        reader.onload = () => {
+          google.script.run
+            .withSuccessHandler(response => {
+              renderSettingsBackups(response.backups);
+              elements.settingsBackupsPanel.open = true;
+              setBackupImportBusy(false);
+              showNotice(
+                'Backup imported successfully. Review it before restoring.',
+                'success',
+              );
+            })
+            .withFailureHandler(error => {
+              setBackupImportBusy(false);
+              showNotice(`Backup import failed: ${getErrorMessage(error)}`, 'error');
+            })
+            .importRetentionSettingsBackupFromAdmin({
+              content: String(reader.result || ''),
+              fileName: file.name,
+            });
+        };
+        reader.onerror = () => {
+          setBackupImportBusy(false);
+          showNotice('The selected backup file could not be read.', 'error');
+        };
+        reader.readAsText(file);
+      }
+
+      function setBackupImportBusy(isBusy) {
+        backupBusy = isBusy;
+        elements.importBackupButton.textContent = isBusy
+          ? 'Importing…'
+          : 'Import backup';
+        updateDirtyState();
+        updateScheduleDirtyState();
+        updateBackupReviewControls();
+      }
+
+      function openBackupDeleteConfirmation(backup, returnFocus) {
+        pendingDeleteBackup = clone(backup);
+        backupDeleteReturnFocus = returnFocus;
+        elements.backupDeleteDescription.textContent =
+          `The backup from ${formatTimestamp(backup.createdAt)} will be ` +
+          'permanently removed. This does not change the active settings.';
+        elements.cancelBackupDeleteButton.disabled = false;
+        elements.confirmBackupDeleteButton.disabled = false;
+        elements.confirmBackupDeleteButton.textContent = 'Delete backup';
+        document.body.classList.add('scan-running');
+        elements.app.setAttribute('inert', '');
+        elements.backupDeleteOverlay.hidden = false;
+        window.requestAnimationFrame(() => {
+          elements.cancelBackupDeleteButton.focus();
+        });
+      }
+
+      function closeBackupDeleteConfirmation() {
+        if (backupBusy) {
+          return;
+        }
+
+        elements.backupDeleteOverlay.hidden = true;
+        elements.app.removeAttribute('inert');
+        document.body.classList.remove('scan-running');
+        pendingDeleteBackup = null;
+        const returnFocus = backupDeleteReturnFocus;
+        backupDeleteReturnFocus = null;
+        if (returnFocus && document.contains(returnFocus)) {
+          returnFocus.focus();
+        } else {
+          elements.settingsBackupsPanel.querySelector('summary').focus();
+        }
+      }
+
+      function handleBackupDeleteKeydown(event) {
+        if (backupBusy) {
+          return;
+        }
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          closeBackupDeleteConfirmation();
+          return;
+        }
+        if (event.key !== 'Tab') {
+          return;
+        }
+
+        if (
+          event.shiftKey &&
+          document.activeElement === elements.cancelBackupDeleteButton
+        ) {
+          event.preventDefault();
+          elements.confirmBackupDeleteButton.focus();
+        } else if (
+          !event.shiftKey &&
+          document.activeElement === elements.confirmBackupDeleteButton
+        ) {
+          event.preventDefault();
+          elements.cancelBackupDeleteButton.focus();
+        }
+      }
+
+      function deleteSelectedBackup() {
+        if (!pendingDeleteBackup || backupBusy) {
+          return;
+        }
+
+        setBackupDeleteBusy(true);
+        google.script.run
+          .withSuccessHandler(response => {
+            renderSettingsBackups(response.backups);
+            setBackupDeleteBusy(false);
+            closeBackupDeleteConfirmation();
+            showNotice('Settings backup deleted.', 'success');
+          })
+          .withFailureHandler(error => {
+            setBackupDeleteBusy(false);
+            elements.backupDeleteDescription.textContent =
+              `Delete failed: ${getErrorMessage(error)}`;
+          })
+          .deleteRetentionSettingsBackupFromAdmin({
+            backupId: pendingDeleteBackup.id,
+            confirmDelete: true,
+          });
+      }
+
+      function setBackupDeleteBusy(isBusy) {
+        backupBusy = isBusy;
+        elements.cancelBackupDeleteButton.disabled = isBusy;
+        elements.confirmBackupDeleteButton.disabled = isBusy;
+        elements.confirmBackupDeleteButton.textContent = isBusy
+          ? 'Deleting…'
+          : 'Delete backup';
+        elements.backupDeleteOverlay.setAttribute(
+          'aria-busy',
+          isBusy ? 'true' : 'false',
+        );
+        updateDirtyState();
+        updateScheduleDirtyState();
+        updateBackupReviewControls();
+      }
+
+      function handleBackupListClick(event) {
+        const button = event.target.closest('button[data-backup-id]');
+        if (!button) {
+          return;
+        }
+        if (dirty || scheduleDirty) {
+          showNotice(
+            'Save or discard all unsaved changes before reviewing a backup.',
+            'error',
+          );
+          return;
+        }
+        if (busy || scheduleBusy || backupBusy) {
+          return;
+        }
+
+        const backup = settingsBackups.items.find(
+          item => item.id === button.dataset.backupId,
+        );
+        if (!backup) {
+          showNotice('That settings backup is no longer available.', 'error');
+          return;
+        }
+
+        const action = button.dataset.backupAction;
+        if (action === 'download') {
+          downloadSettingsBackup(backup);
+        } else if (action === 'delete') {
+          openBackupDeleteConfirmation(backup, button);
+        } else {
+          openBackupRestoreReview(backup, button);
+        }
+      }
+
+      function openBackupRestoreReview(backup, returnFocus) {
+        selectedBackup = clone(backup);
+        backupReviewReturnFocus = returnFocus;
+        elements.backupRestoreDescription.textContent =
+          `${formatTimestamp(backup.createdAt)} · Created before ` +
+          `${getBackupReasonLabel(backup.reason)} · App ` +
+          `v${backup.applicationVersion} · Settings schema ` +
+          `${backup.configurationSchemaVersion}` +
+          (backup.importedAt
+            ? ` · Imported ${formatTimestamp(backup.importedAt)}`
+            : '');
+        renderBackupPreview(backup.settings);
+        renderBackupRestoreWarning(backup.settings);
+        elements.backupRestoreAcknowledgement.checked = false;
+        elements.backupRestoreAcknowledgement.disabled = false;
+        elements.cancelBackupRestoreButton.disabled = false;
+        elements.confirmBackupRestoreButton.textContent = 'Restore backup';
+        updateBackupRestoreButton();
+        document.body.classList.add('scan-running');
+        elements.app.setAttribute('inert', '');
+        elements.backupRestoreOverlay.hidden = false;
+        window.requestAnimationFrame(() => {
+          elements.cancelBackupRestoreButton.focus();
+        });
+      }
+
+      function renderBackupPreview(settings) {
+        const rows = [
+          ['Root label', settings.ROOT_LABEL],
+          [
+            'Starter retention labels',
+            settings.DEFAULT_RETENTION_LABEL_SUFFIXES.join(', '),
+          ],
+          ['Summary email subject prefix', settings.NOTIFICATION_SUBJECT_PREFIX],
+          [
+            'Summary email retention period',
+            settings.NOTIFICATION_RETENTION_LABEL_SUFFIX,
+          ],
+          ['Check for updates', settings.CHECK_FOR_UPDATES ? 'On' : 'Off'],
+          ['Verbose logging', settings.VERBOSE_LOGGING ? 'On' : 'Off'],
+          ['System-notification label', settings.SYSTEM_NOTIFICATION_LABEL_SUFFIX],
+        ];
+
+        elements.backupPreview.textContent = '';
+        rows.forEach(([label, value]) => {
+          const row = document.createElement('div');
+          row.className = 'backup-preview-row';
+          const term = document.createElement('dt');
+          term.textContent = label;
+          const description = document.createElement('dd');
+          description.textContent = value || '(blank)';
+          row.append(term, description);
+          elements.backupPreview.appendChild(row);
+        });
+      }
+
+      function renderBackupRestoreWarning(settings) {
+        const rootChanged = settings.ROOT_LABEL !== initialSettings.ROOT_LABEL;
+        const systemChanged = settings.SYSTEM_NOTIFICATION_LABEL_SUFFIX !==
+          initialSettings.SYSTEM_NOTIFICATION_LABEL_SUFFIX;
+        const warnings = [
+          'The current settings will be backed up before this restore begins.',
+        ];
+
+        if (rootChanged) {
+          warnings.push(
+            'The root label will change, but existing Gmail labels and filters ' +
+              'will not be renamed or updated.',
+          );
+        }
+        if (systemChanged) {
+          warnings.push(
+            'The system-notification label will change and the current internal ' +
+              'label may remain in Gmail.',
+          );
+        }
+
+        elements.backupRestoreWarning.className =
+          'warning-box backup-restore-warning';
+        elements.backupRestoreWarning.textContent = warnings.join(' ');
+        elements.backupRestoreAcknowledgementText.textContent = rootChanged ||
+          systemChanged
+          ? 'I understand these settings will replace the current settings and ' +
+            'existing Gmail labels or filters will not be reorganized.'
+          : 'I understand these saved settings will replace the current settings.';
+      }
+
+      function updateBackupRestoreButton() {
+        elements.confirmBackupRestoreButton.disabled = backupBusy ||
+          !elements.backupRestoreAcknowledgement.checked;
+      }
+
+      function updateBackupReviewControls() {
+        const disabled = busy || scheduleBusy || backupBusy || dirty || scheduleDirty;
+        elements.importBackupButton.disabled = disabled;
+        elements.backupImportInput.disabled = disabled;
+        elements.backupList
+          .querySelectorAll('button[data-backup-id]')
+          .forEach(button => {
+            button.disabled = disabled;
+          });
+      }
+
+      function closeBackupRestoreReview() {
+        if (backupBusy) {
+          return;
+        }
+
+        elements.backupRestoreOverlay.hidden = true;
+        elements.app.removeAttribute('inert');
+        document.body.classList.remove('scan-running');
+        selectedBackup = null;
+        const returnFocus = backupReviewReturnFocus;
+        backupReviewReturnFocus = null;
+        if (returnFocus && document.contains(returnFocus)) {
+          returnFocus.focus();
+        } else {
+          elements.settingsBackupsPanel.querySelector('summary').focus();
+        }
+      }
+
+      function handleBackupRestoreKeydown(event) {
+        if (backupBusy) {
+          return;
+        }
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          closeBackupRestoreReview();
+          return;
+        }
+        if (event.key !== 'Tab') {
+          return;
+        }
+
+        const controls = [
+          elements.backupRestoreAcknowledgement,
+          elements.cancelBackupRestoreButton,
+          elements.confirmBackupRestoreButton,
+        ].filter(control => !control.disabled);
+        const first = controls[0];
+        const last = controls[controls.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+
+      function restoreSelectedBackup() {
+        if (
+          !selectedBackup ||
+          !elements.backupRestoreAcknowledgement.checked ||
+          backupBusy
+        ) {
+          return;
+        }
+
+        const rootChanged = selectedBackup.settings.ROOT_LABEL !==
+          initialSettings.ROOT_LABEL;
+        const systemChanged =
+          selectedBackup.settings.SYSTEM_NOTIFICATION_LABEL_SUFFIX !==
+            initialSettings.SYSTEM_NOTIFICATION_LABEL_SUFFIX;
+        setBackupRestoreBusy(true);
+
+        google.script.run
+          .withSuccessHandler(response => {
+            initialSettings = clone(response.settings);
+            renderSettings(response.settings);
+            renderSettingsBackups(response.backups);
+            updateWarnings();
+            setBackupRestoreBusy(false);
+            updateDirtyState();
+            closeBackupRestoreReview();
+            showNotice(
+              'Settings restored successfully. Your previous settings were ' +
+                'saved as the newest backup.',
+              'success',
+            );
+          })
+          .withFailureHandler(error => {
+            setBackupRestoreBusy(false);
+            elements.backupRestoreWarning.className =
+              'notice notice-error backup-restore-warning';
+            elements.backupRestoreWarning.textContent =
+              `Restore failed: ${getErrorMessage(error)}`;
+          })
+          .restoreRetentionSettingsBackupFromAdmin({
+            backupId: selectedBackup.id,
+            confirmRestore: true,
+            acknowledgements: {
+              rootLabelChange: rootChanged,
+              systemLabelChange: systemChanged,
+            },
+          });
+      }
+
+      function setBackupRestoreBusy(isBusy) {
+        backupBusy = isBusy;
+        elements.backupRestoreAcknowledgement.disabled = isBusy;
+        elements.cancelBackupRestoreButton.disabled = isBusy;
+        elements.confirmBackupRestoreButton.textContent = isBusy
+          ? 'Restoring…'
+          : 'Restore backup';
+        elements.backupRestoreOverlay.setAttribute(
+          'aria-busy',
+          isBusy ? 'true' : 'false',
+        );
+        updateBackupRestoreButton();
+        updateDirtyState();
+        updateScheduleDirtyState();
+        updateBackupReviewControls();
       }
 
       function renderTrigger(trigger) {
@@ -1818,7 +2688,7 @@
         const confirmationRequired =
           currentTrigger.requiresExistingTriggerConfirmation;
         const confirmed = elements.scheduleReplaceAcknowledgement.checked;
-        const controlsBusy = busy || scheduleBusy;
+        const controlsBusy = busy || scheduleBusy || backupBusy;
 
         [
           elements.scheduleEnabled,
@@ -1839,6 +2709,7 @@
         elements.scheduleSaveButton.disabled = controlsBusy ||
           (!scheduleDirty && !setupRequired && !unmanagedRequired) ||
           (confirmationRequired && !confirmed);
+        updateBackupReviewControls();
 
         if (scheduleBusy) {
           return;
@@ -2166,7 +3037,7 @@
         }
 
         dirty = !retentionSettingsEqual(getFormSettings(), initialSettings);
-        const controlsBusy = busy || scheduleBusy;
+        const controlsBusy = busy || scheduleBusy || backupBusy;
         elements.unsavedText.hidden = !dirty;
         elements.discardButton.disabled = controlsBusy || !dirty;
         elements.saveButton.disabled = controlsBusy || !dirty;
@@ -2174,6 +3045,7 @@
         elements.runHelp.textContent = dirty
           ? 'Save or discard your changes before running a retention scan.'
           : 'Immediately process all eligible messages using the saved settings.';
+        updateBackupReviewControls();
       }
 
       function retentionSettingsEqual(first, second) {
@@ -2340,6 +3212,7 @@
           .withSuccessHandler(response => {
             initialSettings = clone(response.settings);
             renderSettings(response.settings);
+            renderSettingsBackups(response.backups);
             updateWarnings();
             setBusy(false);
             updateDirtyState();

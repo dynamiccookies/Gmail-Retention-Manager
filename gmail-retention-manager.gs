@@ -167,6 +167,21 @@ const RETENTION_FACTORY_DEFAULTS = Object.freeze({
  */
 const RETENTION_SETTINGS_PROPERTY_KEY = 'GMAIL_RETENTION_CONFIG';
 const RETENTION_SETTINGS_SCHEMA_VERSION = 1;
+const RETENTION_SETTINGS_BACKUPS_PROPERTY_KEY =
+  'GMAIL_RETENTION_CONFIG_BACKUPS';
+const RETENTION_SETTINGS_BACKUP_STORE_SCHEMA_VERSION = 1;
+const RETENTION_SETTINGS_BACKUP_EXPORT_SCHEMA_VERSION = 1;
+const RETENTION_SETTINGS_BACKUP_EXPORT_TYPE =
+  'gmail-retention-manager-settings-backup';
+const RETENTION_SETTINGS_BACKUP_LIMIT = 5;
+const RETENTION_SETTINGS_BACKUP_IMPORT_MAX_CHARACTERS = 100000;
+const RETENTION_SETTINGS_BACKUP_REASONS = Object.freeze([
+  'settings_change',
+  'restore',
+  'import',
+  'factory_reset',
+  'application_update',
+]);
 const RETENTION_RUNTIME_STATE_PROPERTY_KEY = 'GMAIL_RETENTION_RUNTIME_STATE';
 const RETENTION_RUNTIME_STATE_SCHEMA_VERSION = 1;
 const RETENTION_ADMIN_PREFERENCES_PROPERTY_KEY =
@@ -622,6 +637,375 @@ function getRetentionConfiguration() {
     schemaVersion: RETENTION_SETTINGS_SCHEMA_VERSION,
     settings: copyRetentionSettings(getRetentionSettings()),
   };
+}
+
+/** @return {Object} Empty bounded backup store. */
+function createEmptyRetentionSettingsBackupStore() {
+  return {
+    schemaVersion: RETENTION_SETTINGS_BACKUP_STORE_SCHEMA_VERSION,
+    backups: [],
+    invalidCount: 0,
+    storageError: null,
+  };
+}
+
+/**
+ * Validates one backup and normalizes its restorable configuration.
+ *
+ * @param {*} candidate Candidate backup record.
+ * @return {Object} Validated detached backup.
+ */
+function validateRetentionSettingsBackup(candidate) {
+  if (!isConfigurationObject(candidate)) {
+    throw new Error('backup record must be an object.');
+  }
+  if (typeof candidate.id !== 'string' || !candidate.id.trim()) {
+    throw new Error('backup ID must be a nonempty string.');
+  }
+  if (
+    typeof candidate.createdAt !== 'string' ||
+    Number.isNaN(new Date(candidate.createdAt).getTime())
+  ) {
+    throw new Error('backup timestamp must be a valid date.');
+  }
+  if (
+    candidate.importedAt !== undefined &&
+    candidate.importedAt !== null &&
+    (
+      typeof candidate.importedAt !== 'string' ||
+      Number.isNaN(new Date(candidate.importedAt).getTime())
+    )
+  ) {
+    throw new Error('backup import timestamp must be a valid date.');
+  }
+  if (
+    typeof candidate.applicationVersion !== 'string' ||
+    !candidate.applicationVersion.trim()
+  ) {
+    throw new Error('backup application version must be a nonempty string.');
+  }
+  if (!RETENTION_SETTINGS_BACKUP_REASONS.includes(candidate.reason)) {
+    throw new Error('backup reason is not supported.');
+  }
+  if (
+    !Number.isInteger(candidate.configurationSchemaVersion) ||
+    candidate.configurationSchemaVersion < 0
+  ) {
+    throw new Error('backup configuration schema version is invalid.');
+  }
+  if (
+    !isConfigurationObject(candidate.configuration) ||
+    candidate.configuration.schemaVersion !==
+      candidate.configurationSchemaVersion
+  ) {
+    throw new Error('backup configuration metadata does not match its payload.');
+  }
+
+  const migration = migrateRetentionConfiguration(candidate.configuration);
+  const validatedSettings = validateRetentionSettings(
+    migration.configuration.settings,
+  );
+
+  return {
+    id: candidate.id.trim(),
+    createdAt: new Date(candidate.createdAt).toISOString(),
+    importedAt: candidate.importedAt
+      ? new Date(candidate.importedAt).toISOString()
+      : null,
+    reason: candidate.reason,
+    applicationVersion: candidate.applicationVersion.trim(),
+    configurationSchemaVersion: candidate.configurationSchemaVersion,
+    configuration: {
+      schemaVersion: candidate.configurationSchemaVersion,
+      settings: copyRetentionSettings(validatedSettings),
+    },
+  };
+}
+
+/** @return {number} Timestamp used to order retained backups. */
+function getRetentionSettingsBackupSortTime(backup) {
+  return new Date(backup.importedAt || backup.createdAt).getTime();
+}
+
+/**
+ * Reads and validates the rolling backup store. A fully corrupted store is
+ * reported to the admin page but blocks writes so recoverable data is not
+ * silently overwritten. Individual invalid records are omitted and reported.
+ *
+ * @param {boolean=} strict Whether storage errors should be thrown.
+ * @return {Object} Valid backup store plus diagnostics.
+ */
+function getRetentionSettingsBackupStore(strict) {
+  const storedValue = PropertiesService.getScriptProperties().getProperty(
+    RETENTION_SETTINGS_BACKUPS_PROPERTY_KEY,
+  );
+
+  if (storedValue === null) {
+    return createEmptyRetentionSettingsBackupStore();
+  }
+
+  try {
+    const parsed = JSON.parse(storedValue);
+    if (
+      !isConfigurationObject(parsed) ||
+      parsed.schemaVersion !== RETENTION_SETTINGS_BACKUP_STORE_SCHEMA_VERSION ||
+      !Array.isArray(parsed.backups)
+    ) {
+      throw new Error('unsupported or missing backup-store schema.');
+    }
+
+    const backups = [];
+    let invalidCount = 0;
+    parsed.backups.forEach(candidate => {
+      try {
+        backups.push(validateRetentionSettingsBackup(candidate));
+      } catch (error) {
+        invalidCount += 1;
+        console.error(`Ignoring invalid settings backup: ${error.message}`);
+      }
+    });
+    backups.sort(
+      (first, second) =>
+        getRetentionSettingsBackupSortTime(second) -
+          getRetentionSettingsBackupSortTime(first),
+    );
+
+    return {
+      schemaVersion: RETENTION_SETTINGS_BACKUP_STORE_SCHEMA_VERSION,
+      backups: backups.slice(0, RETENTION_SETTINGS_BACKUP_LIMIT),
+      invalidCount,
+      storageError: null,
+    };
+  } catch (error) {
+    const message =
+      `Invalid ${RETENTION_SETTINGS_BACKUPS_PROPERTY_KEY}: ${error.message}`;
+    if (strict) {
+      throw new Error(`${message} Active settings were not changed.`);
+    }
+    console.error(message);
+    return {
+      ...createEmptyRetentionSettingsBackupStore(),
+      storageError: message,
+    };
+  }
+}
+
+/**
+ * Replaces the backup store with at most the newest five validated records.
+ *
+ * @param {Array<Object>} backups Candidate backup records.
+ * @return {Array<Object>} Saved records.
+ */
+function saveRetentionSettingsBackupStore(backups) {
+  const validatedBackups = backups
+    .map(validateRetentionSettingsBackup)
+    .sort(
+      (first, second) =>
+        getRetentionSettingsBackupSortTime(second) -
+          getRetentionSettingsBackupSortTime(first),
+    )
+    .slice(0, RETENTION_SETTINGS_BACKUP_LIMIT);
+
+  PropertiesService.getScriptProperties().setProperty(
+    RETENTION_SETTINGS_BACKUPS_PROPERTY_KEY,
+    JSON.stringify({
+      schemaVersion: RETENTION_SETTINGS_BACKUP_STORE_SCHEMA_VERSION,
+      backups: validatedBackups,
+    }),
+  );
+
+  return validatedBackups;
+}
+
+/**
+ * Captures the current active retention settings before a mutating operation.
+ * Future import, reset, and updater workflows must call this same function.
+ *
+ * @param {string} reason Supported operation about to change the settings.
+ * @return {Object} Newly created backup.
+ */
+function createRetentionSettingsBackup(reason) {
+  if (!RETENTION_SETTINGS_BACKUP_REASONS.includes(reason)) {
+    throw new Error(`Unsupported settings-backup reason: ${reason}.`);
+  }
+
+  const store = getRetentionSettingsBackupStore(true);
+  const configuration = getRetentionConfiguration();
+  const backup = validateRetentionSettingsBackup({
+    id: Utilities.getUuid(),
+    createdAt: new Date().toISOString(),
+    reason,
+    applicationVersion: RETENTION_CONFIG.VERSION,
+    configurationSchemaVersion: configuration.schemaVersion,
+    configuration,
+  });
+
+  saveRetentionSettingsBackupStore([backup, ...store.backups]);
+  return backup;
+}
+
+/**
+ * Returns backup metadata and settings previews for the private admin page.
+ *
+ * @return {Object} Backup list and storage diagnostics.
+ */
+function getRetentionSettingsBackupsForAdmin() {
+  const store = getRetentionSettingsBackupStore(false);
+  let warning = store.storageError;
+
+  if (!warning && store.invalidCount > 0) {
+    warning = `${store.invalidCount} invalid settings backup` +
+      `${store.invalidCount === 1 ? ' was' : 's were'} ignored. ` +
+      'Active settings were not changed.';
+  }
+
+  return {
+    limit: RETENTION_SETTINGS_BACKUP_LIMIT,
+    warning,
+    invalidCount: store.invalidCount,
+    items: store.backups.map(backup => ({
+      id: backup.id,
+      createdAt: backup.createdAt,
+      importedAt: backup.importedAt,
+      reason: backup.reason,
+      applicationVersion: backup.applicationVersion,
+      configurationSchemaVersion: backup.configurationSchemaVersion,
+      settings: copyRetentionSettings(backup.configuration.settings),
+    })),
+  };
+}
+
+/**
+ * Resolves one currently retained backup and revalidates it before use.
+ *
+ * @param {string} backupId Requested backup ID.
+ * @return {Object} Validated backup.
+ */
+function getRetentionSettingsBackupById(backupId) {
+  if (typeof backupId !== 'string' || !backupId.trim()) {
+    throw new Error('Select a valid settings backup.');
+  }
+
+  const store = getRetentionSettingsBackupStore(true);
+  const backup = store.backups.find(item => item.id === backupId.trim());
+  if (!backup) {
+    throw new Error(
+      'The selected settings backup is invalid, unavailable, or no longer retained.',
+    );
+  }
+
+  return validateRetentionSettingsBackup(backup);
+}
+
+/**
+ * Validates and adds a downloaded backup file to the rolling backup list. The
+ * import does not change active settings; the user must review and restore it.
+ *
+ * @param {Object} request JSON file contents.
+ * @return {Object} Refreshed backups and imported backup ID.
+ */
+function importRetentionSettingsBackupFromAdmin(request) {
+  assertAdminOwnerAccess();
+
+  if (
+    !isConfigurationObject(request) ||
+    typeof request.content !== 'string' ||
+    !request.content.trim()
+  ) {
+    throw new Error('Select a valid Gmail Retention Manager backup file.');
+  }
+  if (request.content.length > RETENTION_SETTINGS_BACKUP_IMPORT_MAX_CHARACTERS) {
+    throw new Error('The selected backup file is unexpectedly large.');
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(request.content);
+  } catch (error) {
+    throw new Error(`The selected backup file is not valid JSON: ${error.message}`);
+  }
+
+  if (
+    !isConfigurationObject(parsed) ||
+    parsed.fileType !== RETENTION_SETTINGS_BACKUP_EXPORT_TYPE ||
+    parsed.exportSchemaVersion !==
+      RETENTION_SETTINGS_BACKUP_EXPORT_SCHEMA_VERSION
+  ) {
+    throw new Error(
+      'The selected file is not a supported Gmail Retention Manager backup.',
+    );
+  }
+
+  const importedSource = validateRetentionSettingsBackup(parsed.backup);
+  const importedBackup = validateRetentionSettingsBackup({
+    ...importedSource,
+    id: Utilities.getUuid(),
+    importedAt: new Date().toISOString(),
+  });
+  const lock = LockService.getScriptLock();
+
+  if (!lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
+    throw new Error(
+      'Another retention operation is active. Wait for it to finish and try again.',
+    );
+  }
+
+  try {
+    const store = getRetentionSettingsBackupStore(true);
+    saveRetentionSettingsBackupStore([importedBackup, ...store.backups]);
+    return {
+      backups: getRetentionSettingsBackupsForAdmin(),
+      importedBackupId: importedBackup.id,
+      importedAt: importedBackup.importedAt,
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Permanently removes one retained backup without changing active settings.
+ *
+ * @param {Object} request Backup ID and explicit confirmation.
+ * @return {Object} Refreshed backup list.
+ */
+function deleteRetentionSettingsBackupFromAdmin(request) {
+  assertAdminOwnerAccess();
+
+  if (
+    !isConfigurationObject(request) ||
+    request.confirmDelete !== true ||
+    typeof request.backupId !== 'string' ||
+    !request.backupId.trim()
+  ) {
+    throw new Error('Confirm which settings backup should be deleted.');
+  }
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
+    throw new Error(
+      'Another retention operation is active. Wait for it to finish and try again.',
+    );
+  }
+
+  try {
+    const store = getRetentionSettingsBackupStore(true);
+    const backupId = request.backupId.trim();
+    if (!store.backups.some(backup => backup.id === backupId)) {
+      throw new Error('The selected settings backup is no longer available.');
+    }
+
+    saveRetentionSettingsBackupStore(
+      store.backups.filter(backup => backup.id !== backupId),
+    );
+    return {
+      backups: getRetentionSettingsBackupsForAdmin(),
+      deletedBackupId: backupId,
+      deletedAt: new Date().toISOString(),
+    };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /**
@@ -1225,6 +1609,7 @@ function getAdminPageData() {
     },
     configurationSchemaVersion: RETENTION_SETTINGS_SCHEMA_VERSION,
     settings: copyRetentionSettings(getRetentionSettings()),
+    backups: getRetentionSettingsBackupsForAdmin(),
     adminPreferences: getRetentionAdminPreferences(),
     runtime: getRetentionRuntimeState(),
     trigger,
@@ -1258,32 +1643,112 @@ function saveAdminPageSettings(request) {
   }
 
   const validatedSettings = validateRetentionSettings(request.settings);
-  const currentSettings = getRetentionSettings();
   const acknowledgements = isConfigurationObject(request.acknowledgements)
     ? request.acknowledgements
     : {};
-  const rootChanged = validatedSettings.ROOT_LABEL !== currentSettings.ROOT_LABEL;
-  const systemLabelChanged =
-    validatedSettings.SYSTEM_NOTIFICATION_LABEL_SUFFIX !==
-      currentSettings.SYSTEM_NOTIFICATION_LABEL_SUFFIX;
+  const lock = LockService.getScriptLock();
 
-  if (rootChanged && acknowledgements.rootLabelChange !== true) {
+  if (!lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
     throw new Error(
-      'Confirm that changing the root label does not rename existing Gmail ' +
-      'labels or update Gmail filters.',
-    );
-  }
-  if (systemLabelChanged && acknowledgements.systemLabelChange !== true) {
-    throw new Error(
-      'Confirm that changing the system-notification label may leave the old ' +
-      'internal label behind.',
+      'Another retention operation is active. Wait for it to finish and try again.',
     );
   }
 
-  return {
-    settings: saveRetentionSettings(validatedSettings),
-    savedAt: new Date().toISOString(),
-  };
+  try {
+    retentionSettingsCache = null;
+    const currentSettings = getRetentionSettings();
+    const rootChanged =
+      validatedSettings.ROOT_LABEL !== currentSettings.ROOT_LABEL;
+    const systemLabelChanged =
+      validatedSettings.SYSTEM_NOTIFICATION_LABEL_SUFFIX !==
+        currentSettings.SYSTEM_NOTIFICATION_LABEL_SUFFIX;
+
+    if (rootChanged && acknowledgements.rootLabelChange !== true) {
+      throw new Error(
+        'Confirm that changing the root label does not rename existing Gmail ' +
+        'labels or update Gmail filters.',
+      );
+    }
+    if (systemLabelChanged && acknowledgements.systemLabelChange !== true) {
+      throw new Error(
+        'Confirm that changing the system-notification label may leave the old ' +
+        'internal label behind.',
+      );
+    }
+
+    createRetentionSettingsBackup('settings_change');
+    return {
+      settings: saveRetentionSettings(validatedSettings),
+      backups: getRetentionSettingsBackupsForAdmin(),
+      savedAt: new Date().toISOString(),
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Restores a validated backup after preserving the current active settings.
+ * Existing Gmail labels and filters are never renamed as a side effect.
+ *
+ * @param {Object} request Backup ID and explicit acknowledgements.
+ * @return {Object} Restored settings, refreshed backups, and timestamp.
+ */
+function restoreRetentionSettingsBackupFromAdmin(request) {
+  assertAdminOwnerAccess();
+
+  if (!isConfigurationObject(request) || request.confirmRestore !== true) {
+    throw new Error('Confirm that the selected backup should be restored.');
+  }
+
+  const acknowledgements = isConfigurationObject(request.acknowledgements)
+    ? request.acknowledgements
+    : {};
+  const lock = LockService.getScriptLock();
+
+  if (!lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
+    throw new Error(
+      'Another retention operation is active. Wait for it to finish and try again.',
+    );
+  }
+
+  try {
+    retentionSettingsCache = null;
+    const backup = getRetentionSettingsBackupById(request.backupId);
+    const migration = migrateRetentionConfiguration(backup.configuration);
+    const restoredSettings = validateRetentionSettings(
+      migration.configuration.settings,
+    );
+    const currentSettings = getRetentionSettings();
+    const rootChanged =
+      restoredSettings.ROOT_LABEL !== currentSettings.ROOT_LABEL;
+    const systemLabelChanged =
+      restoredSettings.SYSTEM_NOTIFICATION_LABEL_SUFFIX !==
+        currentSettings.SYSTEM_NOTIFICATION_LABEL_SUFFIX;
+
+    if (rootChanged && acknowledgements.rootLabelChange !== true) {
+      throw new Error(
+        'Confirm that restoring the root label does not rename existing Gmail ' +
+        'labels or update Gmail filters.',
+      );
+    }
+    if (systemLabelChanged && acknowledgements.systemLabelChange !== true) {
+      throw new Error(
+        'Confirm that restoring the system-notification label may leave the ' +
+        'current internal label behind.',
+      );
+    }
+
+    createRetentionSettingsBackup('restore');
+    return {
+      settings: saveRetentionSettings(restoredSettings),
+      backups: getRetentionSettingsBackupsForAdmin(),
+      restoredBackupId: backup.id,
+      restoredAt: new Date().toISOString(),
+    };
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /**
