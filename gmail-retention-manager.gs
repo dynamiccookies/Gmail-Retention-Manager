@@ -91,6 +91,13 @@
  *    direct release link. Results are cached for up to six hours, and lookup
  *    failures never interrupt retention processing or notification delivery.
  *
+ * 10. ARCHIVE_ON_LABEL is disabled by default. When enabled, each scan removes
+ *     the Inbox label from directly retention-labeled messages that are not yet
+ *     expired. This is performed at message level so unrelated messages in a
+ *     mixed conversation are not archived. This option requires the advanced
+ *     Gmail service. Disabling it stops future archiving but does not return
+ *     previously archived messages to Inbox.
+ *
  * FIRST-RUN LABELS
  * ----------------
  * At the beginning of each run, the script checks whether the configured root
@@ -143,6 +150,9 @@ const RETENTION_FACTORY_DEFAULTS = Object.freeze({
   // Top-level label containing all user-configurable retention policies.
   ROOT_LABEL: 'Retention',
 
+  // Remove directly retention-labeled messages from Inbox on the next scan.
+  ARCHIVE_ON_LABEL: false,
+
   // Child-label values created only when ROOT_LABEL does not exist at all.
   DEFAULT_RETENTION_LABEL_SUFFIXES: Object.freeze(['7d', '1m']),
 
@@ -166,7 +176,77 @@ const RETENTION_FACTORY_DEFAULTS = Object.freeze({
  * settings migrations without tying them to a particular software release.
  */
 const RETENTION_SETTINGS_PROPERTY_KEY = 'GMAIL_RETENTION_CONFIG';
-const RETENTION_SETTINGS_SCHEMA_VERSION = 1;
+const RETENTION_SETTINGS_SCHEMA_VERSION = 2;
+const RETENTION_SETTINGS_BACKUPS_PROPERTY_KEY =
+  'GMAIL_RETENTION_CONFIG_BACKUPS';
+const RETENTION_SETTINGS_BACKUP_STORE_SCHEMA_VERSION = 1;
+const RETENTION_SETTINGS_BACKUP_EXPORT_SCHEMA_VERSION = 1;
+const RETENTION_SETTINGS_BACKUP_EXPORT_TYPE =
+  'gmail-retention-manager-settings-backup';
+const RETENTION_SETTINGS_BACKUP_LIMIT = 5;
+const RETENTION_SETTINGS_BACKUP_IMPORT_MAX_CHARACTERS = 100000;
+const RETENTION_SETTINGS_BACKUP_REASONS = Object.freeze([
+  'settings_change',
+  'restore',
+  'import',
+  'factory_reset',
+  'application_update',
+]);
+const RETENTION_RUNTIME_STATE_PROPERTY_KEY = 'GMAIL_RETENTION_RUNTIME_STATE';
+const RETENTION_RUNTIME_STATE_SCHEMA_VERSION = 1;
+const RETENTION_ADMIN_PREFERENCES_PROPERTY_KEY =
+  'GMAIL_RETENTION_ADMIN_PREFERENCES';
+const RETENTION_ADMIN_PREFERENCES_SCHEMA_VERSION = 1;
+const RETENTION_ADMIN_FACTORY_PREFERENCES = Object.freeze({
+  theme: 'dark',
+});
+const RETENTION_SCHEDULE_PROPERTY_KEY = 'GMAIL_RETENTION_SCHEDULE';
+const RETENTION_SCHEDULE_SCHEMA_VERSION = 1;
+const RETENTION_SCHEDULE_HANDLER = 'enforceGmailRetention';
+const RETENTION_SCHEDULE_DEFAULT_FREQUENCY = 'daily';
+const RETENTION_SCHEDULE_DEFAULT_DAILY_TIME = '07:00';
+const RETENTION_SCHEDULE_FREQUENCIES = Object.freeze({
+  every_15_minutes: Object.freeze({
+    label: 'Every 15 minutes',
+    unit: 'minutes',
+    interval: 15,
+  }),
+  every_30_minutes: Object.freeze({
+    label: 'Every 30 minutes',
+    unit: 'minutes',
+    interval: 30,
+  }),
+  every_hour: Object.freeze({
+    label: 'Every hour',
+    unit: 'hours',
+    interval: 1,
+  }),
+  every_2_hours: Object.freeze({
+    label: 'Every 2 hours',
+    unit: 'hours',
+    interval: 2,
+  }),
+  every_4_hours: Object.freeze({
+    label: 'Every 4 hours',
+    unit: 'hours',
+    interval: 4,
+  }),
+  every_6_hours: Object.freeze({
+    label: 'Every 6 hours',
+    unit: 'hours',
+    interval: 6,
+  }),
+  every_12_hours: Object.freeze({
+    label: 'Every 12 hours',
+    unit: 'hours',
+    interval: 12,
+  }),
+  daily: Object.freeze({
+    label: 'Daily',
+    unit: 'days',
+    interval: 1,
+  }),
+});
 
 /*
  * These values control application behavior but are not user preferences. They
@@ -182,6 +262,11 @@ const RETENTION_CONFIG = Object.freeze({
   // Cache GitHub release results to reduce external requests. Apps Script allows
   // a maximum cache duration of 21,600 seconds (six hours).
   UPDATE_CHECK_CACHE_SECONDS: 21600,
+
+  // Message-level Inbox removal uses the advanced Gmail service because Apps
+  // Script's built-in archive methods operate only on entire conversations.
+  ARCHIVE_LIST_PAGE_SIZE: 500,
+  ARCHIVE_BATCH_SIZE: 500,
 
   // Ambiguous "m" intentionally means month. Minutes require min/mins/minute(s).
   UNIT_ALIASES: Object.freeze({
@@ -339,6 +424,9 @@ function validateRetentionSettings(settings) {
   if (typeof settings.CHECK_FOR_UPDATES !== 'boolean') {
     throw new Error('CHECK_FOR_UPDATES must be true or false.');
   }
+  if (typeof settings.ARCHIVE_ON_LABEL !== 'boolean') {
+    throw new Error('ARCHIVE_ON_LABEL must be true or false.');
+  }
   if (!Array.isArray(settings.DEFAULT_RETENTION_LABEL_SUFFIXES)) {
     throw new Error('DEFAULT_RETENTION_LABEL_SUFFIXES must be an array.');
   }
@@ -387,6 +475,7 @@ function validateRetentionSettings(settings) {
   return {
     VERBOSE_LOGGING: settings.VERBOSE_LOGGING,
     ROOT_LABEL: rootLabel,
+    ARCHIVE_ON_LABEL: settings.ARCHIVE_ON_LABEL,
     DEFAULT_RETENTION_LABEL_SUFFIXES: defaultSuffixes,
     NOTIFICATION_SUBJECT_PREFIX: settings.NOTIFICATION_SUBJECT_PREFIX.trim(),
     NOTIFICATION_RETENTION_LABEL_SUFFIX: notificationRetentionSuffix,
@@ -452,6 +541,18 @@ function migrateRetentionConfiguration(storedConfiguration) {
           settings: extractLegacyRetentionSettings(legacySettings),
         };
         schemaVersion = 1;
+        migrated = true;
+        break;
+      }
+      case 1: {
+        configuration = {
+          schemaVersion: 2,
+          settings: {
+            ...configuration.settings,
+            ARCHIVE_ON_LABEL: false,
+          },
+        };
+        schemaVersion = 2;
         migrated = true;
         break;
       }
@@ -535,6 +636,10 @@ function getRetentionSettings() {
     retentionSettingsCache = freezeRetentionSettings(validatedSettings);
 
     if (migration.migrated) {
+      createRetentionSettingsBackupFromConfiguration(
+        'application_update',
+        parsedConfiguration,
+      );
       scriptProperties.setProperty(
         RETENTION_SETTINGS_PROPERTY_KEY,
         JSON.stringify({
@@ -558,7 +663,7 @@ function getRetentionSettings() {
 }
 
 /**
- * Returns the versioned active configuration for the future admin interface.
+ * Returns the versioned active configuration for the admin interface.
  *
  * @return {{schemaVersion: number, settings: Object}} Detached configuration.
  */
@@ -566,6 +671,1314 @@ function getRetentionConfiguration() {
   return {
     schemaVersion: RETENTION_SETTINGS_SCHEMA_VERSION,
     settings: copyRetentionSettings(getRetentionSettings()),
+  };
+}
+
+/** @return {Object} Empty bounded backup store. */
+function createEmptyRetentionSettingsBackupStore() {
+  return {
+    schemaVersion: RETENTION_SETTINGS_BACKUP_STORE_SCHEMA_VERSION,
+    backups: [],
+    invalidCount: 0,
+    storageError: null,
+  };
+}
+
+/**
+ * Validates one backup and normalizes its restorable configuration.
+ *
+ * @param {*} candidate Candidate backup record.
+ * @return {Object} Validated detached backup.
+ */
+function validateRetentionSettingsBackup(candidate) {
+  if (!isConfigurationObject(candidate)) {
+    throw new Error('backup record must be an object.');
+  }
+  if (typeof candidate.id !== 'string' || !candidate.id.trim()) {
+    throw new Error('backup ID must be a nonempty string.');
+  }
+  if (
+    typeof candidate.createdAt !== 'string' ||
+    Number.isNaN(new Date(candidate.createdAt).getTime())
+  ) {
+    throw new Error('backup timestamp must be a valid date.');
+  }
+  if (
+    candidate.importedAt !== undefined &&
+    candidate.importedAt !== null &&
+    (
+      typeof candidate.importedAt !== 'string' ||
+      Number.isNaN(new Date(candidate.importedAt).getTime())
+    )
+  ) {
+    throw new Error('backup import timestamp must be a valid date.');
+  }
+  if (
+    typeof candidate.applicationVersion !== 'string' ||
+    !candidate.applicationVersion.trim()
+  ) {
+    throw new Error('backup application version must be a nonempty string.');
+  }
+  if (!RETENTION_SETTINGS_BACKUP_REASONS.includes(candidate.reason)) {
+    throw new Error('backup reason is not supported.');
+  }
+  if (
+    !Number.isInteger(candidate.configurationSchemaVersion) ||
+    candidate.configurationSchemaVersion < 0
+  ) {
+    throw new Error('backup configuration schema version is invalid.');
+  }
+  if (
+    !isConfigurationObject(candidate.configuration) ||
+    candidate.configuration.schemaVersion !==
+      candidate.configurationSchemaVersion
+  ) {
+    throw new Error('backup configuration metadata does not match its payload.');
+  }
+
+  const migration = migrateRetentionConfiguration(candidate.configuration);
+  const validatedSettings = validateRetentionSettings(
+    migration.configuration.settings,
+  );
+
+  return {
+    id: candidate.id.trim(),
+    createdAt: new Date(candidate.createdAt).toISOString(),
+    importedAt: candidate.importedAt
+      ? new Date(candidate.importedAt).toISOString()
+      : null,
+    reason: candidate.reason,
+    applicationVersion: candidate.applicationVersion.trim(),
+    configurationSchemaVersion: candidate.configurationSchemaVersion,
+    configuration: {
+      schemaVersion: candidate.configurationSchemaVersion,
+      settings: copyRetentionSettings(validatedSettings),
+    },
+  };
+}
+
+/** @return {number} Timestamp used to order retained backups. */
+function getRetentionSettingsBackupSortTime(backup) {
+  return new Date(backup.importedAt || backup.createdAt).getTime();
+}
+
+/**
+ * Reads and validates the rolling backup store. A fully corrupted store is
+ * reported to the admin page but blocks writes so recoverable data is not
+ * silently overwritten. Individual invalid records are omitted and reported.
+ *
+ * @param {boolean=} strict Whether storage errors should be thrown.
+ * @return {Object} Valid backup store plus diagnostics.
+ */
+function getRetentionSettingsBackupStore(strict) {
+  const storedValue = PropertiesService.getScriptProperties().getProperty(
+    RETENTION_SETTINGS_BACKUPS_PROPERTY_KEY,
+  );
+
+  if (storedValue === null) {
+    return createEmptyRetentionSettingsBackupStore();
+  }
+
+  try {
+    const parsed = JSON.parse(storedValue);
+    if (
+      !isConfigurationObject(parsed) ||
+      parsed.schemaVersion !== RETENTION_SETTINGS_BACKUP_STORE_SCHEMA_VERSION ||
+      !Array.isArray(parsed.backups)
+    ) {
+      throw new Error('unsupported or missing backup-store schema.');
+    }
+
+    const backups = [];
+    let invalidCount = 0;
+    parsed.backups.forEach(candidate => {
+      try {
+        backups.push(validateRetentionSettingsBackup(candidate));
+      } catch (error) {
+        invalidCount += 1;
+        console.error(`Ignoring invalid settings backup: ${error.message}`);
+      }
+    });
+    backups.sort(
+      (first, second) =>
+        getRetentionSettingsBackupSortTime(second) -
+          getRetentionSettingsBackupSortTime(first),
+    );
+
+    return {
+      schemaVersion: RETENTION_SETTINGS_BACKUP_STORE_SCHEMA_VERSION,
+      backups: backups.slice(0, RETENTION_SETTINGS_BACKUP_LIMIT),
+      invalidCount,
+      storageError: null,
+    };
+  } catch (error) {
+    const message =
+      `Invalid ${RETENTION_SETTINGS_BACKUPS_PROPERTY_KEY}: ${error.message}`;
+    if (strict) {
+      throw new Error(`${message} Active settings were not changed.`);
+    }
+    console.error(message);
+    return {
+      ...createEmptyRetentionSettingsBackupStore(),
+      storageError: message,
+    };
+  }
+}
+
+/**
+ * Replaces the backup store with at most the newest five validated records.
+ *
+ * @param {Array<Object>} backups Candidate backup records.
+ * @return {Array<Object>} Saved records.
+ */
+function saveRetentionSettingsBackupStore(backups) {
+  const validatedBackups = backups
+    .map(validateRetentionSettingsBackup)
+    .sort(
+      (first, second) =>
+        getRetentionSettingsBackupSortTime(second) -
+          getRetentionSettingsBackupSortTime(first),
+    )
+    .slice(0, RETENTION_SETTINGS_BACKUP_LIMIT);
+
+  PropertiesService.getScriptProperties().setProperty(
+    RETENTION_SETTINGS_BACKUPS_PROPERTY_KEY,
+    JSON.stringify({
+      schemaVersion: RETENTION_SETTINGS_BACKUP_STORE_SCHEMA_VERSION,
+      backups: validatedBackups,
+    }),
+  );
+
+  return validatedBackups;
+}
+
+/**
+ * Captures the current active retention settings before a mutating operation.
+ * Future import, reset, and updater workflows must call this same function.
+ *
+ * @param {string} reason Supported operation about to change the settings.
+ * @return {Object} Newly created backup.
+ */
+function createRetentionSettingsBackup(reason) {
+  return createRetentionSettingsBackupFromConfiguration(
+    reason,
+    getRetentionConfiguration(),
+  );
+}
+
+/**
+ * Captures a supplied stored configuration without loading active settings.
+ * This allows schema migration to preserve the pre-migration value without
+ * recursively calling getRetentionSettings().
+ *
+ * @param {string} reason Supported operation about to change the settings.
+ * @param {Object} configuration Versioned or legacy stored configuration.
+ * @return {Object} Newly created backup.
+ */
+function createRetentionSettingsBackupFromConfiguration(reason, configuration) {
+  if (!RETENTION_SETTINGS_BACKUP_REASONS.includes(reason)) {
+    throw new Error(`Unsupported settings-backup reason: ${reason}.`);
+  }
+  if (!isConfigurationObject(configuration)) {
+    throw new Error('Settings backup configuration must be an object.');
+  }
+
+  const store = getRetentionSettingsBackupStore(true);
+  const schemaVersion = configuration.schemaVersion === undefined
+    ? 0
+    : configuration.schemaVersion;
+  const versionedConfiguration = configuration.schemaVersion === undefined
+    ? {
+        schemaVersion: 0,
+        settings: isConfigurationObject(configuration.settings)
+          ? configuration.settings
+          : extractLegacyRetentionSettings(configuration),
+      }
+    : configuration;
+  const backup = validateRetentionSettingsBackup({
+    id: Utilities.getUuid(),
+    createdAt: new Date().toISOString(),
+    reason,
+    applicationVersion: RETENTION_CONFIG.VERSION,
+    configurationSchemaVersion: schemaVersion,
+    configuration: versionedConfiguration,
+  });
+
+  saveRetentionSettingsBackupStore([backup, ...store.backups]);
+  return backup;
+}
+
+/**
+ * Returns backup metadata and settings previews for the private admin page.
+ *
+ * @return {Object} Backup list and storage diagnostics.
+ */
+function getRetentionSettingsBackupsForAdmin() {
+  const store = getRetentionSettingsBackupStore(false);
+  let warning = store.storageError;
+
+  if (!warning && store.invalidCount > 0) {
+    warning = `${store.invalidCount} invalid settings backup` +
+      `${store.invalidCount === 1 ? ' was' : 's were'} ignored. ` +
+      'Active settings were not changed.';
+  }
+
+  return {
+    limit: RETENTION_SETTINGS_BACKUP_LIMIT,
+    warning,
+    invalidCount: store.invalidCount,
+    items: store.backups.map(backup => ({
+      id: backup.id,
+      createdAt: backup.createdAt,
+      importedAt: backup.importedAt,
+      reason: backup.reason,
+      applicationVersion: backup.applicationVersion,
+      configurationSchemaVersion: backup.configurationSchemaVersion,
+      settings: copyRetentionSettings(backup.configuration.settings),
+    })),
+  };
+}
+
+/**
+ * Resolves one currently retained backup and revalidates it before use.
+ *
+ * @param {string} backupId Requested backup ID.
+ * @return {Object} Validated backup.
+ */
+function getRetentionSettingsBackupById(backupId) {
+  if (typeof backupId !== 'string' || !backupId.trim()) {
+    throw new Error('Select a valid settings backup.');
+  }
+
+  const store = getRetentionSettingsBackupStore(true);
+  const backup = store.backups.find(item => item.id === backupId.trim());
+  if (!backup) {
+    throw new Error(
+      'The selected settings backup is invalid, unavailable, or no longer retained.',
+    );
+  }
+
+  return validateRetentionSettingsBackup(backup);
+}
+
+/**
+ * Validates and adds a downloaded backup file to the rolling backup list. The
+ * import does not change active settings; the user must review and restore it.
+ *
+ * @param {Object} request JSON file contents.
+ * @return {Object} Refreshed backups and imported backup ID.
+ */
+function importRetentionSettingsBackupFromAdmin(request) {
+  assertAdminOwnerAccess();
+
+  if (
+    !isConfigurationObject(request) ||
+    typeof request.content !== 'string' ||
+    !request.content.trim()
+  ) {
+    throw new Error('Select a valid Gmail Retention Manager backup file.');
+  }
+  if (request.content.length > RETENTION_SETTINGS_BACKUP_IMPORT_MAX_CHARACTERS) {
+    throw new Error('The selected backup file is unexpectedly large.');
+  }
+
+  let parsed;
+  try {
+    parsed = JSON.parse(request.content);
+  } catch (error) {
+    throw new Error(`The selected backup file is not valid JSON: ${error.message}`);
+  }
+
+  if (
+    !isConfigurationObject(parsed) ||
+    parsed.fileType !== RETENTION_SETTINGS_BACKUP_EXPORT_TYPE ||
+    parsed.exportSchemaVersion !==
+      RETENTION_SETTINGS_BACKUP_EXPORT_SCHEMA_VERSION
+  ) {
+    throw new Error(
+      'The selected file is not a supported Gmail Retention Manager backup.',
+    );
+  }
+
+  const importedSource = validateRetentionSettingsBackup(parsed.backup);
+  const importedBackup = validateRetentionSettingsBackup({
+    ...importedSource,
+    id: Utilities.getUuid(),
+    importedAt: new Date().toISOString(),
+  });
+  const lock = LockService.getScriptLock();
+
+  if (!lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
+    throw new Error(
+      'Another retention operation is active. Wait for it to finish and try again.',
+    );
+  }
+
+  try {
+    const store = getRetentionSettingsBackupStore(true);
+    saveRetentionSettingsBackupStore([importedBackup, ...store.backups]);
+    return {
+      backups: getRetentionSettingsBackupsForAdmin(),
+      importedBackupId: importedBackup.id,
+      importedAt: importedBackup.importedAt,
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Permanently removes one retained backup without changing active settings.
+ *
+ * @param {Object} request Backup ID and explicit confirmation.
+ * @return {Object} Refreshed backup list.
+ */
+function deleteRetentionSettingsBackupFromAdmin(request) {
+  assertAdminOwnerAccess();
+
+  if (
+    !isConfigurationObject(request) ||
+    request.confirmDelete !== true ||
+    typeof request.backupId !== 'string' ||
+    !request.backupId.trim()
+  ) {
+    throw new Error('Confirm which settings backup should be deleted.');
+  }
+
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
+    throw new Error(
+      'Another retention operation is active. Wait for it to finish and try again.',
+    );
+  }
+
+  try {
+    const store = getRetentionSettingsBackupStore(true);
+    const backupId = request.backupId.trim();
+    if (!store.backups.some(backup => backup.id === backupId)) {
+      throw new Error('The selected settings backup is no longer available.');
+    }
+
+    saveRetentionSettingsBackupStore(
+      store.backups.filter(backup => backup.id !== backupId),
+    );
+    return {
+      backups: getRetentionSettingsBackupsForAdmin(),
+      deletedBackupId: backupId,
+      deletedAt: new Date().toISOString(),
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Validates preferences that affect only the administration interface.
+ * Keeping them separate prevents display choices from affecting retention jobs.
+ *
+ * @param {*} preferences Candidate admin preferences.
+ * @return {{theme: string}} Validated preferences.
+ */
+function validateRetentionAdminPreferences(preferences) {
+  if (!isConfigurationObject(preferences)) {
+    throw new Error('admin preferences must be an object.');
+  }
+
+  if (!['dark', 'light'].includes(preferences.theme)) {
+    throw new Error('admin theme must be dark or light.');
+  }
+
+  return { theme: preferences.theme };
+}
+
+/**
+ * Persists private admin-interface preferences in Script Properties.
+ *
+ * @param {Object} preferences Candidate preferences.
+ * @return {{theme: string}} Saved preferences.
+ */
+function saveRetentionAdminPreferences(preferences) {
+  const validated = validateRetentionAdminPreferences(preferences);
+  const storedPreferences = {
+    schemaVersion: RETENTION_ADMIN_PREFERENCES_SCHEMA_VERSION,
+    preferences: validated,
+  };
+
+  PropertiesService.getScriptProperties().setProperty(
+    RETENTION_ADMIN_PREFERENCES_PROPERTY_KEY,
+    JSON.stringify(storedPreferences),
+  );
+
+  return { ...validated };
+}
+
+/**
+ * Loads admin preferences and initializes or repairs the noncritical theme
+ * preference with the dark factory default when necessary.
+ *
+ * @return {{theme: string}} Saved or default preferences.
+ */
+function getRetentionAdminPreferences() {
+  const storedValue = PropertiesService.getScriptProperties().getProperty(
+    RETENTION_ADMIN_PREFERENCES_PROPERTY_KEY,
+  );
+
+  if (storedValue === null) {
+    return saveRetentionAdminPreferences(
+      RETENTION_ADMIN_FACTORY_PREFERENCES,
+    );
+  }
+
+  try {
+    const storedPreferences = JSON.parse(storedValue);
+
+    if (
+      !isConfigurationObject(storedPreferences) ||
+      storedPreferences.schemaVersion !==
+        RETENTION_ADMIN_PREFERENCES_SCHEMA_VERSION
+    ) {
+      throw new Error('unsupported or missing admin-preference schema');
+    }
+
+    return validateRetentionAdminPreferences(storedPreferences.preferences);
+  } catch (error) {
+    console.error(
+      `Resetting invalid ${RETENTION_ADMIN_PREFERENCES_PROPERTY_KEY}: ` +
+        `${error.message}`,
+    );
+    return saveRetentionAdminPreferences(
+      RETENTION_ADMIN_FACTORY_PREFERENCES,
+    );
+  }
+}
+
+/** @return {string} Valid default time zone for a new schedule. */
+function getDefaultRetentionScheduleTimeZone() {
+  const scriptTimeZone = Session.getScriptTimeZone();
+
+  try {
+    return validateRetentionScheduleTimeZone(scriptTimeZone);
+  } catch (error) {
+    console.error(
+      `Invalid Apps Script project time zone ${scriptTimeZone}: ${error.message}`,
+    );
+    return 'Etc/UTC';
+  }
+}
+
+/** @return {Object} Default schedule for a new or not-yet-managed installation. */
+function createDefaultRetentionScheduleConfiguration() {
+  return {
+    schemaVersion: RETENTION_SCHEDULE_SCHEMA_VERSION,
+    configured: false,
+    preferences: {
+      enabled: true,
+      frequency: RETENTION_SCHEDULE_DEFAULT_FREQUENCY,
+      dailyTime: RETENTION_SCHEDULE_DEFAULT_DAILY_TIME,
+      timeZone: getDefaultRetentionScheduleTimeZone(),
+    },
+    managedTriggerId: null,
+    updatedAt: null,
+    configurationError: null,
+  };
+}
+
+/**
+ * Validates an IANA time zone by asking Apps Script to format a date with it.
+ *
+ * @param {*} value Candidate time zone.
+ * @return {string} Validated time-zone name.
+ */
+function validateRetentionScheduleTimeZone(value) {
+  if (typeof value !== 'string' || !value.trim() || value.length > 100) {
+    throw new Error('schedule time zone must be a valid time-zone name.');
+  }
+
+  const timeZone = value.trim();
+  try {
+    Utilities.formatDate(new Date(), timeZone, 'yyyy-MM-dd HH:mm z');
+  } catch (error) {
+    throw new Error(`${timeZone} is not a supported time zone.`);
+  }
+
+  return timeZone;
+}
+
+/**
+ * Validates the user-controlled portion of the retention schedule.
+ *
+ * @param {*} preferences Candidate schedule preferences.
+ * @return {Object} Normalized preferences.
+ */
+function validateRetentionSchedulePreferences(preferences) {
+  if (!isConfigurationObject(preferences)) {
+    throw new Error('schedule preferences must be an object.');
+  }
+
+  const expectedKeys = ['enabled', 'frequency', 'dailyTime', 'timeZone'];
+  const missingKeys = expectedKeys.filter(
+    key => !Object.prototype.hasOwnProperty.call(preferences, key),
+  );
+  const unknownKeys = Object.keys(preferences).filter(
+    key => !expectedKeys.includes(key),
+  );
+
+  if (missingKeys.length > 0) {
+    throw new Error(`schedule preferences are missing: ${missingKeys.join(', ')}.`);
+  }
+  if (unknownKeys.length > 0) {
+    throw new Error(
+      `schedule preferences contain unknown fields: ${unknownKeys.join(', ')}.`,
+    );
+  }
+  if (typeof preferences.enabled !== 'boolean') {
+    throw new Error('schedule enabled must be true or false.');
+  }
+  if (!Object.prototype.hasOwnProperty.call(
+    RETENTION_SCHEDULE_FREQUENCIES,
+    preferences.frequency,
+  )) {
+    throw new Error('schedule frequency is not supported.');
+  }
+  if (
+    typeof preferences.dailyTime !== 'string' ||
+    !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(preferences.dailyTime)
+  ) {
+    throw new Error('daily schedule time must use 24-hour HH:MM format.');
+  }
+
+  return {
+    enabled: preferences.enabled,
+    frequency: preferences.frequency,
+    dailyTime: preferences.dailyTime,
+    timeZone: validateRetentionScheduleTimeZone(preferences.timeZone),
+  };
+}
+
+/**
+ * Loads schedule preferences and managed-trigger identity. Invalid schedule
+ * metadata never prevents a manual Gmail retention scan.
+ *
+ * @return {Object} Detached schedule configuration.
+ */
+function getRetentionScheduleConfiguration() {
+  const storedValue = PropertiesService.getScriptProperties().getProperty(
+    RETENTION_SCHEDULE_PROPERTY_KEY,
+  );
+
+  if (storedValue === null) {
+    return createDefaultRetentionScheduleConfiguration();
+  }
+
+  try {
+    const parsed = JSON.parse(storedValue);
+
+    if (
+      !isConfigurationObject(parsed) ||
+      parsed.schemaVersion !== RETENTION_SCHEDULE_SCHEMA_VERSION
+    ) {
+      throw new Error('unsupported or missing schedule schema');
+    }
+    if (typeof parsed.configured !== 'boolean') {
+      throw new Error('configured must be true or false');
+    }
+    if (
+      parsed.managedTriggerId !== null &&
+      (typeof parsed.managedTriggerId !== 'string' || !parsed.managedTriggerId)
+    ) {
+      throw new Error('managedTriggerId must be null or a nonempty string');
+    }
+    if (
+      parsed.updatedAt !== null &&
+      (typeof parsed.updatedAt !== 'string' ||
+        Number.isNaN(new Date(parsed.updatedAt).getTime()))
+    ) {
+      throw new Error('updatedAt must be null or a valid timestamp');
+    }
+
+    return {
+      schemaVersion: RETENTION_SCHEDULE_SCHEMA_VERSION,
+      configured: parsed.configured,
+      preferences: validateRetentionSchedulePreferences(parsed.preferences),
+      managedTriggerId: parsed.managedTriggerId,
+      updatedAt: parsed.updatedAt,
+      configurationError: null,
+    };
+  } catch (error) {
+    console.error(
+      `Ignoring invalid ${RETENTION_SCHEDULE_PROPERTY_KEY}: ${error.message}`,
+    );
+    return {
+      ...createDefaultRetentionScheduleConfiguration(),
+      configurationError:
+        'The saved schedule metadata is invalid and must be replaced.',
+    };
+  }
+}
+
+/**
+ * Persists validated schedule preferences and operational trigger identity.
+ *
+ * @param {Object} preferences User-controlled schedule preferences.
+ * @param {?string} managedTriggerId Current managed trigger ID.
+ * @return {Object} Saved schedule configuration.
+ */
+function saveRetentionScheduleConfiguration(preferences, managedTriggerId) {
+  const validatedPreferences = validateRetentionSchedulePreferences(preferences);
+
+  if (
+    managedTriggerId !== null &&
+    (typeof managedTriggerId !== 'string' || !managedTriggerId)
+  ) {
+    throw new Error('managed trigger ID must be null or a nonempty string.');
+  }
+
+  const configuration = {
+    schemaVersion: RETENTION_SCHEDULE_SCHEMA_VERSION,
+    configured: true,
+    preferences: validatedPreferences,
+    managedTriggerId,
+    updatedAt: new Date().toISOString(),
+  };
+
+  PropertiesService.getScriptProperties().setProperty(
+    RETENTION_SCHEDULE_PROPERTY_KEY,
+    JSON.stringify(configuration),
+  );
+
+  return {
+    ...configuration,
+    preferences: { ...validatedPreferences },
+    configurationError: null,
+  };
+}
+
+/** @return {string} Time zone used for schedules and user-facing timestamps. */
+function getConfiguredRetentionTimeZone() {
+  const configuration = getRetentionScheduleConfiguration();
+  return configuration.configurationError
+    ? getDefaultRetentionScheduleTimeZone()
+    : configuration.preferences.timeZone;
+}
+
+/** @return {Array} Time-driven triggers that call the retention entry point. */
+function getRetentionClockTriggers() {
+  return ScriptApp.getProjectTriggers().filter(trigger =>
+    trigger.getHandlerFunction() === RETENTION_SCHEDULE_HANDLER &&
+      trigger.getEventType() === ScriptApp.EventType.CLOCK,
+  );
+}
+
+/**
+ * Creates an Apps Script trigger from validated schedule preferences.
+ *
+ * @param {Object} preferences Validated enabled schedule preferences.
+ * @return {Trigger} Newly created trigger.
+ */
+function createManagedRetentionTrigger(preferences) {
+  const definition = RETENTION_SCHEDULE_FREQUENCIES[preferences.frequency];
+  let builder = ScriptApp.newTrigger(RETENTION_SCHEDULE_HANDLER).timeBased();
+
+  if (definition.unit === 'minutes') {
+    return builder.everyMinutes(definition.interval).create();
+  }
+  if (definition.unit === 'hours') {
+    return builder.everyHours(definition.interval).create();
+  }
+
+  const [hour, minute] = preferences.dailyTime.split(':').map(Number);
+  builder = builder
+    .atHour(hour)
+    .nearMinute(minute)
+    .everyDays(1)
+    .inTimezone(preferences.timeZone);
+  return builder.create();
+}
+
+/** @return {Object} Empty operational state for a new installation. */
+function createDefaultRetentionRuntimeState() {
+  return {
+    schemaVersion: RETENTION_RUNTIME_STATE_SCHEMA_VERSION,
+    lastRunStatus: 'never',
+    lastRunStartedAt: null,
+    lastRunCompletedAt: null,
+    lastSuccessfulRunAt: null,
+    lastSuccessfulResult: null,
+    lastErrorAt: null,
+    lastErrorMessage: null,
+    lastResult: null,
+  };
+}
+
+/**
+ * Loads internal dashboard state without allowing corrupt status data to block
+ * Gmail retention. User settings remain subject to the stricter validation path.
+ *
+ * @return {Object} Detached runtime state.
+ */
+function getRetentionRuntimeState() {
+  const storedValue = PropertiesService.getScriptProperties().getProperty(
+    RETENTION_RUNTIME_STATE_PROPERTY_KEY,
+  );
+
+  if (storedValue === null) {
+    return createDefaultRetentionRuntimeState();
+  }
+
+  try {
+    const parsed = JSON.parse(storedValue);
+
+    if (
+      !isConfigurationObject(parsed) ||
+      parsed.schemaVersion !== RETENTION_RUNTIME_STATE_SCHEMA_VERSION
+    ) {
+      throw new Error('unsupported or missing runtime-state schema');
+    }
+
+    return {
+      ...createDefaultRetentionRuntimeState(),
+      ...parsed,
+      schemaVersion: RETENTION_RUNTIME_STATE_SCHEMA_VERSION,
+    };
+  } catch (error) {
+    console.error(
+      `Ignoring invalid ${RETENTION_RUNTIME_STATE_PROPERTY_KEY}: ` +
+        `${error.message}`,
+    );
+    return createDefaultRetentionRuntimeState();
+  }
+}
+
+/**
+ * Updates the internal dashboard state. A status-write failure is logged but
+ * never interrupts retention processing.
+ *
+ * @param {Object} changes Runtime-state fields to replace.
+ */
+function updateRetentionRuntimeStateSafely(changes) {
+  try {
+    const state = {
+      ...getRetentionRuntimeState(),
+      ...changes,
+      schemaVersion: RETENTION_RUNTIME_STATE_SCHEMA_VERSION,
+    };
+
+    PropertiesService.getScriptProperties().setProperty(
+      RETENTION_RUNTIME_STATE_PROPERTY_KEY,
+      JSON.stringify(state),
+    );
+  } catch (error) {
+    console.error(
+      `Unable to update ${RETENTION_RUNTIME_STATE_PROPERTY_KEY}: ` +
+        `${error && error.stack ? error.stack : error}`,
+    );
+  }
+}
+
+/** @return {string} Compact error text safe for persistent dashboard state. */
+function getRuntimeErrorMessage(error) {
+  const message = error && error.message ? error.message : String(error);
+  return message.slice(0, 2000);
+}
+
+/**
+ * Provides limited defense in depth in addition to the required owner-only web
+ * app deployment. Some Apps Script execution contexts intentionally hide the
+ * active user's email, so deployment access remains the authoritative control.
+ *
+ * @return {{ownerEmail: string, activeEmail: string}} Session identity details.
+ */
+function assertAdminOwnerAccess() {
+  const ownerEmail = Session.getEffectiveUser().getEmail() || '';
+  const activeEmail = Session.getActiveUser().getEmail() || '';
+
+  if (
+    ownerEmail &&
+    activeEmail &&
+    ownerEmail.toLowerCase() !== activeEmail.toLowerCase()
+  ) {
+    throw new Error('Access denied. This admin page is restricted to its owner.');
+  }
+
+  return { ownerEmail, activeEmail };
+}
+
+/**
+ * Serves the private administration interface.
+ *
+ * @return {HtmlOutput} Admin webpage.
+ */
+function doGet() {
+  assertAdminOwnerAccess();
+
+  return HtmlService.createHtmlOutputFromFile('admin')
+    .setTitle('Gmail Retention Manager')
+    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+}
+
+/**
+ * Returns verified schedule state. Apps Script cannot reveal the frequency of a
+ * manually created trigger, so only a trigger ID recorded by this application
+ * can be presented as managed.
+ *
+ * @return {Object} Trigger status and editable schedule preferences.
+ */
+function getRetentionTriggerStatus() {
+  const configuration = getRetentionScheduleConfiguration();
+  const matchingTriggers = getRetentionClockTriggers();
+  const triggerCount = matchingTriggers.length;
+  const managedTrigger = configuration.managedTriggerId
+    ? matchingTriggers.find(
+      trigger => trigger.getUniqueId() === configuration.managedTriggerId,
+    ) || null
+    : null;
+  const unmanagedTriggerCount = managedTrigger
+    ? triggerCount - 1
+    : triggerCount;
+  const frequencyOptions = Object.entries(RETENTION_SCHEDULE_FREQUENCIES).map(
+    ([value, definition]) => ({
+      value,
+      label: definition.label,
+      runsPerDay: definition.unit === 'minutes'
+        ? 1440 / definition.interval
+        : definition.unit === 'hours'
+          ? 24 / definition.interval
+          : 1,
+    }),
+  );
+  const baseStatus = {
+    configured: configuration.configured,
+    configurationError: configuration.configurationError,
+    preferences: { ...configuration.preferences },
+    managedTriggerId: configuration.managedTriggerId,
+    managed: Boolean(managedTrigger),
+    triggerCount,
+    unmanagedTriggerCount,
+    frequencyOptions,
+    updatedAt: configuration.updatedAt,
+  };
+
+  if (configuration.configurationError) {
+    return {
+      ...baseStatus,
+      enabled: triggerCount > 0,
+      status: 'warning',
+      state: 'invalid_configuration',
+      needsRepair: true,
+      requiresExistingTriggerConfirmation: triggerCount > 0,
+      summary: configuration.configurationError,
+    };
+  }
+
+  if (managedTrigger && configuration.preferences.enabled) {
+    if (unmanagedTriggerCount > 0) {
+      return {
+        ...baseStatus,
+        enabled: true,
+        status: 'warning',
+        state: 'duplicate',
+        needsRepair: true,
+        requiresExistingTriggerConfirmation: true,
+        summary:
+          `${triggerCount} retention triggers were detected. Repair the ` +
+          'schedule to remove the extra trigger(s).',
+      };
+    }
+
+    return {
+      ...baseStatus,
+      enabled: true,
+      status: 'enabled',
+      state: 'managed',
+      needsRepair: false,
+      requiresExistingTriggerConfirmation: false,
+      summary:
+        `${RETENTION_SCHEDULE_FREQUENCIES[
+          configuration.preferences.frequency
+        ].label} retention schedule is active.`,
+    };
+  }
+
+  if (triggerCount > 0) {
+    return {
+      ...baseStatus,
+      enabled: true,
+      status: 'warning',
+      state: triggerCount > 1 ? 'duplicate' : 'unmanaged',
+      needsRepair: triggerCount > 1,
+      requiresExistingTriggerConfirmation: true,
+      summary: triggerCount > 1
+        ? `${triggerCount} retention triggers were detected. Choose the ` +
+          'desired schedule and repair the duplicates.'
+        : 'An existing retention trigger is active, but Apps Script does not ' +
+          'expose its frequency. Replace it to manage the schedule here.',
+    };
+  }
+
+  if (configuration.configured && configuration.preferences.enabled) {
+    return {
+      ...baseStatus,
+      enabled: false,
+      status: 'warning',
+      state: 'missing',
+      needsRepair: true,
+      requiresExistingTriggerConfirmation: false,
+      summary:
+        'The saved schedule is enabled, but its managed trigger is missing.',
+    };
+  }
+
+  if (!configuration.configured) {
+    return {
+      ...baseStatus,
+      enabled: false,
+      status: 'disabled',
+      state: 'setup',
+      needsRepair: false,
+      requiresExistingTriggerConfirmation: false,
+      summary:
+        'Scheduled scans are not configured. Enable the default daily schedule below.',
+    };
+  }
+
+  return {
+    ...baseStatus,
+    enabled: false,
+    status: 'disabled',
+    state: 'disabled',
+    needsRepair: false,
+    requiresExistingTriggerConfirmation: false,
+    summary: 'Scheduled scans are disabled. Manual scans remain available.',
+  };
+}
+
+/**
+ * Loads all data required to render or refresh the admin page.
+ *
+ * @return {Object} Serializable admin-page data.
+ */
+function getAdminPageData() {
+  const identity = assertAdminOwnerAccess();
+  const trigger = getRetentionTriggerStatus();
+
+  return {
+    application: {
+      name: 'Gmail Retention Manager',
+      version: RETENTION_CONFIG.VERSION,
+      repositoryUrl: RETENTION_CONFIG.PROJECT_REPOSITORY_URL,
+      releasesUrl: `${RETENTION_CONFIG.PROJECT_REPOSITORY_URL}/releases`,
+      currentReleaseUrl: getProjectReleaseUrl(),
+      ownerEmail: identity.ownerEmail,
+      timeZone: trigger.preferences.timeZone,
+    },
+    configurationSchemaVersion: RETENTION_SETTINGS_SCHEMA_VERSION,
+    settings: copyRetentionSettings(getRetentionSettings()),
+    backups: getRetentionSettingsBackupsForAdmin(),
+    adminPreferences: getRetentionAdminPreferences(),
+    runtime: getRetentionRuntimeState(),
+    trigger,
+  };
+}
+
+/**
+ * Saves the administration-page color theme independently from retention
+ * settings so switching appearance never creates unsaved retention changes.
+ *
+ * @param {string} theme Requested dark or light theme.
+ * @return {{theme: string}} Saved preference.
+ */
+function saveAdminTheme(theme) {
+  assertAdminOwnerAccess();
+  return saveRetentionAdminPreferences({ theme });
+}
+
+/**
+ * Saves admin-page settings after server validation and confirmation of changes
+ * that can orphan existing Gmail labels or filters.
+ *
+ * @param {Object} request Settings and risk acknowledgements from the webpage.
+ * @return {Object} Saved settings and timestamp.
+ */
+function saveAdminPageSettings(request) {
+  assertAdminOwnerAccess();
+
+  if (!isConfigurationObject(request)) {
+    throw new Error('The settings request must be an object.');
+  }
+
+  const validatedSettings = validateRetentionSettings(request.settings);
+  const acknowledgements = isConfigurationObject(request.acknowledgements)
+    ? request.acknowledgements
+    : {};
+  const lock = LockService.getScriptLock();
+
+  if (!lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
+    throw new Error(
+      'Another retention operation is active. Wait for it to finish and try again.',
+    );
+  }
+
+  try {
+    retentionSettingsCache = null;
+    const currentSettings = getRetentionSettings();
+    const rootChanged =
+      validatedSettings.ROOT_LABEL !== currentSettings.ROOT_LABEL;
+    const systemLabelChanged =
+      validatedSettings.SYSTEM_NOTIFICATION_LABEL_SUFFIX !==
+        currentSettings.SYSTEM_NOTIFICATION_LABEL_SUFFIX;
+
+    if (rootChanged && acknowledgements.rootLabelChange !== true) {
+      throw new Error(
+        'Confirm that changing the root label does not rename existing Gmail ' +
+        'labels or update Gmail filters.',
+      );
+    }
+    if (systemLabelChanged && acknowledgements.systemLabelChange !== true) {
+      throw new Error(
+        'Confirm that changing the system-notification label may leave the old ' +
+        'internal label behind.',
+      );
+    }
+
+    createRetentionSettingsBackup('settings_change');
+    return {
+      settings: saveRetentionSettings(validatedSettings),
+      backups: getRetentionSettingsBackupsForAdmin(),
+      savedAt: new Date().toISOString(),
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Restores a validated backup after preserving the current active settings.
+ * Existing Gmail labels and filters are never renamed as a side effect.
+ *
+ * @param {Object} request Backup ID and explicit acknowledgements.
+ * @return {Object} Restored settings, refreshed backups, and timestamp.
+ */
+function restoreRetentionSettingsBackupFromAdmin(request) {
+  assertAdminOwnerAccess();
+
+  if (!isConfigurationObject(request) || request.confirmRestore !== true) {
+    throw new Error('Confirm that the selected backup should be restored.');
+  }
+
+  const acknowledgements = isConfigurationObject(request.acknowledgements)
+    ? request.acknowledgements
+    : {};
+  const lock = LockService.getScriptLock();
+
+  if (!lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
+    throw new Error(
+      'Another retention operation is active. Wait for it to finish and try again.',
+    );
+  }
+
+  try {
+    retentionSettingsCache = null;
+    const backup = getRetentionSettingsBackupById(request.backupId);
+    const migration = migrateRetentionConfiguration(backup.configuration);
+    const restoredSettings = validateRetentionSettings(
+      migration.configuration.settings,
+    );
+    const currentSettings = getRetentionSettings();
+    const rootChanged =
+      restoredSettings.ROOT_LABEL !== currentSettings.ROOT_LABEL;
+    const systemLabelChanged =
+      restoredSettings.SYSTEM_NOTIFICATION_LABEL_SUFFIX !==
+        currentSettings.SYSTEM_NOTIFICATION_LABEL_SUFFIX;
+
+    if (rootChanged && acknowledgements.rootLabelChange !== true) {
+      throw new Error(
+        'Confirm that restoring the root label does not rename existing Gmail ' +
+        'labels or update Gmail filters.',
+      );
+    }
+    if (systemLabelChanged && acknowledgements.systemLabelChange !== true) {
+      throw new Error(
+        'Confirm that restoring the system-notification label may leave the ' +
+        'current internal label behind.',
+      );
+    }
+
+    createRetentionSettingsBackup('restore');
+    return {
+      settings: saveRetentionSettings(restoredSettings),
+      backups: getRetentionSettingsBackupsForAdmin(),
+      restoredBackupId: backup.id,
+      restoredAt: new Date().toISOString(),
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Compares normalized schedule preferences.
+ *
+ * @param {Object} first First preference object.
+ * @param {Object} second Second preference object.
+ * @return {boolean} Whether every preference matches.
+ */
+function retentionSchedulePreferencesEqual(first, second) {
+  return Boolean(first && second) &&
+    first.enabled === second.enabled &&
+    first.frequency === second.frequency &&
+    first.dailyTime === second.dailyTime &&
+    first.timeZone === second.timeZone;
+}
+
+/**
+ * Validates and applies one schedule operation while holding the script lock.
+ * A replacement trigger is created and recorded before the prior trigger is
+ * removed, preventing a failed creation from disabling a working schedule.
+ *
+ * @param {Object} request Schedule preferences and confirmations.
+ * @param {boolean} repairOnly Whether this is an explicit repair action.
+ * @return {Object} Refreshed trigger state and operation type.
+ */
+function applyRetentionScheduleFromAdmin(request, repairOnly) {
+  assertAdminOwnerAccess();
+
+  if (!isConfigurationObject(request)) {
+    throw new Error('The schedule request must be an object.');
+  }
+
+  const preferences = validateRetentionSchedulePreferences(request.preferences);
+  const confirmExistingTriggers = request.confirmExistingTriggers === true;
+  const lock = LockService.getScriptLock();
+
+  if (!lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
+    throw new Error(
+      'Another retention operation is active. Wait for it to finish and try again.',
+    );
+  }
+
+  try {
+    const beforeStatus = getRetentionTriggerStatus();
+    const beforeConfiguration = getRetentionScheduleConfiguration();
+    const existingTriggers = getRetentionClockTriggers();
+    const managedTrigger = beforeConfiguration.managedTriggerId
+      ? existingTriggers.find(
+        trigger => trigger.getUniqueId() === beforeConfiguration.managedTriggerId,
+      ) || null
+      : null;
+
+    if (
+      beforeStatus.requiresExistingTriggerConfirmation &&
+      !confirmExistingTriggers
+    ) {
+      throw new Error(
+        'Confirm that Retention Manager may replace or remove the existing ' +
+        'retention trigger(s).',
+      );
+    }
+
+    if (
+      repairOnly &&
+      managedTrigger &&
+      preferences.enabled &&
+      retentionSchedulePreferencesEqual(
+        preferences,
+        beforeConfiguration.preferences,
+      )
+    ) {
+      const extraTriggers = existingTriggers.filter(
+        trigger => trigger.getUniqueId() !== managedTrigger.getUniqueId(),
+      );
+      extraTriggers.forEach(trigger => ScriptApp.deleteTrigger(trigger));
+
+      return {
+        action: 'repaired',
+        trigger: getRetentionTriggerStatus(),
+        savedAt: new Date().toISOString(),
+      };
+    }
+
+    if (!preferences.enabled) {
+      saveRetentionScheduleConfiguration(preferences, null);
+      existingTriggers.forEach(trigger => ScriptApp.deleteTrigger(trigger));
+
+      return {
+        action: 'disabled',
+        trigger: getRetentionTriggerStatus(),
+        savedAt: new Date().toISOString(),
+      };
+    }
+
+    let newTrigger = null;
+    try {
+      newTrigger = createManagedRetentionTrigger(preferences);
+      saveRetentionScheduleConfiguration(
+        preferences,
+        newTrigger.getUniqueId(),
+      );
+    } catch (error) {
+      if (newTrigger) {
+        try {
+          ScriptApp.deleteTrigger(newTrigger);
+        } catch (cleanupError) {
+          console.error(
+            `Unable to remove failed replacement trigger: ${cleanupError.message}`,
+          );
+        }
+      }
+      throw error;
+    }
+
+    existingTriggers.forEach(trigger => ScriptApp.deleteTrigger(trigger));
+
+    const action = repairOnly
+      ? 'repaired'
+      : beforeStatus.enabled
+        ? 'updated'
+        : 'enabled';
+
+    return {
+      action,
+      trigger: getRetentionTriggerStatus(),
+      savedAt: new Date().toISOString(),
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/**
+ * Creates, replaces, disables, or re-enables the managed retention schedule.
+ *
+ * @param {Object} request Schedule preferences and confirmations.
+ * @return {Object} Refreshed trigger state.
+ */
+function saveRetentionScheduleFromAdmin(request) {
+  return applyRetentionScheduleFromAdmin(request, false);
+}
+
+/**
+ * Repairs a missing managed trigger or removes duplicate retention triggers.
+ *
+ * @param {Object} request Schedule preferences and confirmations.
+ * @return {Object} Refreshed trigger state.
+ */
+function repairRetentionScheduleFromAdmin(request) {
+  return applyRetentionScheduleFromAdmin(request, true);
+}
+
+/**
+ * Runs retention from the admin page and returns refreshed operational data.
+ *
+ * @return {Object} Run result plus current runtime and trigger status.
+ */
+function runRetentionFromAdmin() {
+  assertAdminOwnerAccess();
+  const result = enforceGmailRetention();
+
+  return {
+    result,
+    runtime: getRetentionRuntimeState(),
+    trigger: getRetentionTriggerStatus(),
   };
 }
 
@@ -952,16 +2365,78 @@ function escapeRegExp(value) {
 
 /**
  * Main entry point. Configure a daily time-driven trigger for this function.
+ * The returned object is ignored by scheduled triggers and displayed by the
+ * admin page after a manual run.
+ *
+ * @return {Object} Serializable outcome of the retention run.
  */
 function enforceGmailRetention() {
+  const startedAt = new Date();
+  updateRetentionRuntimeStateSafely({
+    lastRunStatus: 'running',
+    lastRunStartedAt: startedAt.toISOString(),
+    lastRunCompletedAt: null,
+    lastResult: null,
+  });
+
+  try {
+    const result = executeGmailRetention_();
+    const completedAt = new Date();
+    const completedResult = {
+      ...result,
+      startedAt: startedAt.toISOString(),
+      completedAt: completedAt.toISOString(),
+    };
+    const stateChanges = {
+      lastRunStatus: result.status,
+      lastRunCompletedAt: completedAt.toISOString(),
+      lastResult: completedResult,
+    };
+
+    if (result.status === 'success') {
+      stateChanges.lastSuccessfulRunAt = completedAt.toISOString();
+      stateChanges.lastSuccessfulResult = completedResult;
+    }
+
+    const operationErrors = Array.isArray(result.operationErrors)
+      ? result.operationErrors.filter(
+          message => typeof message === 'string' && message.trim(),
+        )
+      : [];
+    if (operationErrors.length > 0) {
+      stateChanges.lastErrorAt = completedAt.toISOString();
+      stateChanges.lastErrorMessage = operationErrors.join(' ').slice(0, 2000);
+    }
+
+    updateRetentionRuntimeStateSafely(stateChanges);
+    return completedResult;
+  } catch (error) {
+    const failedAt = new Date().toISOString();
+    updateRetentionRuntimeStateSafely({
+      lastRunStatus: 'error',
+      lastRunCompletedAt: failedAt,
+      lastErrorAt: failedAt,
+      lastErrorMessage: getRuntimeErrorMessage(error),
+      lastResult: null,
+    });
+    throw error;
+  }
+}
+
+/** @return {Object} Core retention outcome before dashboard metadata is added. */
+function executeGmailRetention_() {
   const settings = getRetentionSettings();
   verboseLog('MAIN', 'enforceGmailRetention() entered.');
   const lock = LockService.getScriptLock();
   verboseLog('LOCK', `Attempting script lock for ${RETENTION_CONFIG.LOCK_TIMEOUT_MS} ms.`);
 
   if (!lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
-    console.log('Another retention run is already active. This run was skipped.');
-    return;
+    const reason = 'Another retention run is already active. This run was skipped.';
+    console.log(reason);
+    return {
+      status: 'skipped',
+      reason,
+    };
   }
 
   try {
@@ -982,6 +2457,7 @@ function enforceGmailRetention() {
           getNotificationRetentionLabelName(),
         systemNotificationLabel:
           getSystemNotificationLabelName(),
+        archiveOnLabel: settings.ARCHIVE_ON_LABEL,
       },
     });
 
@@ -1016,7 +2492,21 @@ function enforceGmailRetention() {
       !systemNotificationLabel
     ) {
       console.log('No valid retention labels were found. Nothing to process.');
-      return;
+      return {
+        status: 'success',
+        reviewedConversationCount: 0,
+        movedMessageCount: 0,
+        movedConversationCount: 0,
+        reportedMessageCount: 0,
+        removedRetentionLabelCount: 0,
+        archiveOnLabelEnabled: settings.ARCHIVE_ON_LABEL,
+        archivedMessageCount: 0,
+        archivedConversationCount: 0,
+        archiveLookupFailureCount: 0,
+        archiveFailedMessageCount: 0,
+        operationErrors: [],
+        summaryEmailCount: 0,
+      };
     }
 
     /*
@@ -1032,6 +2522,7 @@ function enforceGmailRetention() {
     );
     verboseLog('THREAD COLLECTION', `Collected ${threadMap.size} unique thread(s).`);
     const pendingDeletions = [];
+    const excludedArchiveMessageIds = new Set();
     let removedRetentionLabelCount = 0;
 
     for (const thread of threadMap.values()) {
@@ -1049,6 +2540,11 @@ function enforceGmailRetention() {
 
       const messages = thread.getMessages();
       const activeMessages = messages.filter(message => !message.isInTrash());
+      if (isSystemNotification) {
+        activeMessages.forEach(message => {
+          excludedArchiveMessageIds.add(message.getId());
+        });
+      }
       verboseLog('THREAD MESSAGES', {
         threadId: thread.getId(),
         messageCount: messages.length,
@@ -1185,8 +2681,17 @@ function enforceGmailRetention() {
         messageRecords,
         isSystemNotification,
       });
+      activeMessages.forEach(message => {
+        excludedArchiveMessageIds.add(message.getId());
+      });
     }
 
+    const archiveResult = settings.ARCHIVE_ON_LABEL
+      ? archiveRetentionLabeledInboxMessages(
+          discoveredRetentionLabels,
+          excludedArchiveMessageIds,
+        )
+      : createEmptyArchiveResult();
     const deletionResult = movePendingMessagesToTrash(pendingDeletions);
     const deletedMessageRecords = deletionResult.deletedMessageRecords;
 
@@ -1197,19 +2702,41 @@ function enforceGmailRetention() {
      * Only ordinary deleted messages generate a notification. When the only
      * deletion is an expired system notification, no new notification is sent.
      */
-    if (deletedMessageRecords.length > 0) {
-      sendDeletionSummaries(deletedMessageRecords, now);
-    }
+    const summaryEmailCount = deletedMessageRecords.length > 0
+      ? sendDeletionSummaries(deletedMessageRecords, now)
+      : 0;
 
-    console.log(
-      [
-        `Reviewed ${threadMap.size} conversation(s).`,
-        `Moved ${deletionResult.movedMessageCount} active message(s) to Trash ` +
-          `from ${deletionResult.movedThreadCount} conversation(s).`,
-        `Reported ${deletedMessageRecords.length} deleted message(s).`,
-        `Removed ${removedRetentionLabelCount} redundant retention label(s).`,
-      ].join(' '),
-    );
+    const result = {
+      status: 'success',
+      reviewedConversationCount: threadMap.size,
+      movedMessageCount: deletionResult.movedMessageCount,
+      movedConversationCount: deletionResult.movedThreadCount,
+      reportedMessageCount: deletedMessageRecords.length,
+      removedRetentionLabelCount,
+      archiveOnLabelEnabled: settings.ARCHIVE_ON_LABEL,
+      archivedMessageCount: archiveResult.archivedMessageCount,
+      archivedConversationCount: archiveResult.archivedConversationCount,
+      archiveLookupFailureCount: archiveResult.lookupFailureCount,
+      archiveFailedMessageCount: archiveResult.failedMessageCount,
+      operationErrors: archiveResult.errors,
+      summaryEmailCount,
+    };
+
+    console.log([
+      `Reviewed ${result.reviewedConversationCount} conversation(s).`,
+      `Moved ${result.movedMessageCount} active message(s) to Trash ` +
+        `from ${result.movedConversationCount} conversation(s).`,
+      `Reported ${result.reportedMessageCount} deleted message(s).`,
+      `Removed ${result.removedRetentionLabelCount} redundant retention label(s).`,
+      settings.ARCHIVE_ON_LABEL
+        ? `Archived ${result.archivedMessageCount} labeled Inbox message(s) ` +
+          `from ${result.archivedConversationCount} conversation(s). ` +
+          `Archive warnings: ${result.archiveLookupFailureCount} lookup ` +
+          `failure(s), ${result.archiveFailedMessageCount} message move failure(s).`
+        : 'Archive-on-label is disabled.',
+    ].join(' '));
+
+    return result;
   } catch (error) {
     console.error(
       `Gmail Retention Manager ${RETENTION_CONFIG.VERSION} failed: ` +
@@ -1825,9 +3352,172 @@ function buildNotificationSubject(
   const partSuffix = totalParts > 1
     ? ` — part ${partNumber} of ${totalParts}`
     : '';
+  const prefix = getRetentionSettings().NOTIFICATION_SUBJECT_PREFIX;
+  const subjectBody = `${formatMessageCount(totalMessageCount)} deleted${partSuffix}`;
 
-  return `${getRetentionSettings().NOTIFICATION_SUBJECT_PREFIX} ` +
-    `${formatMessageCount(totalMessageCount)} deleted${partSuffix}`;
+  return prefix ? `${prefix} ${subjectBody}` : subjectBody;
+}
+
+/** @return {Object} Empty message-level archive outcome. */
+function createEmptyArchiveResult() {
+  return {
+    archivedMessageCount: 0,
+    archivedConversationCount: 0,
+    lookupFailureCount: 0,
+    failedMessageCount: 0,
+    errors: [],
+  };
+}
+
+/**
+ * Lists messages that directly carry one retention label and the Inbox system
+ * label. Using the Gmail API avoids treating every message in a mixed thread as
+ * though it carries the same user label.
+ *
+ * @param {string} labelId Gmail user-label ID.
+ * @return {Array<{id: string, threadId: string}>} Directly labeled messages.
+ */
+function listInboxMessagesForRetentionLabel(labelId) {
+  const messages = [];
+  let pageToken = null;
+
+  do {
+    const options = {
+      labelIds: [labelId, 'INBOX'],
+      maxResults: RETENTION_CONFIG.ARCHIVE_LIST_PAGE_SIZE,
+      includeSpamTrash: false,
+      fields: 'messages(id,threadId),nextPageToken',
+    };
+    if (pageToken) {
+      options.pageToken = pageToken;
+    }
+
+    const payload = Gmail.Users.Messages.list('me', options) || {};
+
+    if (Array.isArray(payload.messages)) {
+      payload.messages.forEach(message => {
+        if (
+          isConfigurationObject(message) &&
+          typeof message.id === 'string' &&
+          message.id &&
+          typeof message.threadId === 'string' &&
+          message.threadId
+        ) {
+          messages.push({ id: message.id, threadId: message.threadId });
+        }
+      });
+    }
+    pageToken = typeof payload.nextPageToken === 'string' &&
+      payload.nextPageToken
+      ? payload.nextPageToken
+      : null;
+  } while (pageToken);
+
+  return messages;
+}
+
+/**
+ * Removes the Inbox system label from directly retention-labeled messages.
+ * Expired messages and generated system notifications are excluded by caller so
+ * they can follow their existing Trash and notification paths unchanged.
+ * Lookup or modification failures are reported but do not block retention.
+ *
+ * @param {Array} retentionPolicies Discovered valid retention-label policies.
+ * @param {Set<string>} excludedMessageIds Messages that must not be archived.
+ * @return {Object} Successful archive counts and nonfatal failure counts.
+ */
+function archiveRetentionLabeledInboxMessages(
+  retentionPolicies,
+  excludedMessageIds,
+) {
+  const result = createEmptyArchiveResult();
+  const uniqueLabels = new Map();
+
+  retentionPolicies.forEach(policy => {
+    if (policy && policy.label) {
+      uniqueLabels.set(policy.label.getId(), policy.labelName);
+    }
+  });
+  if (uniqueLabels.size === 0) {
+    return result;
+  }
+
+  if (
+    typeof Gmail === 'undefined' ||
+    !Gmail.Users ||
+    !Gmail.Users.Messages
+  ) {
+    result.lookupFailureCount = uniqueLabels.size;
+    const message =
+      'Archive-on-label could not run because the advanced Gmail service is ' +
+      'not enabled for this Apps Script project.';
+    result.errors.push(message);
+    console.error(message);
+    return result;
+  }
+
+  const candidateMessages = new Map();
+  for (const [labelId, labelName] of uniqueLabels.entries()) {
+    try {
+      const messages = listInboxMessagesForRetentionLabel(labelId);
+      messages.forEach(message => {
+        if (!excludedMessageIds.has(message.id)) {
+          candidateMessages.set(message.id, message);
+        }
+      });
+      verboseLog('ARCHIVE LABEL LOOKUP', {
+        labelName,
+        directlyLabeledInboxMessageCount: messages.length,
+      });
+    } catch (error) {
+      result.lookupFailureCount += 1;
+      const message =
+        `Unable to evaluate Inbox messages for ${labelName}: ${error.message}`;
+      result.errors.push(message);
+      console.error(message);
+    }
+  }
+
+  const candidates = [...candidateMessages.values()];
+  const archivedThreadIds = new Set();
+  for (
+    let index = 0;
+    index < candidates.length;
+    index += RETENTION_CONFIG.ARCHIVE_BATCH_SIZE
+  ) {
+    const batch = candidates.slice(
+      index,
+      index + RETENTION_CONFIG.ARCHIVE_BATCH_SIZE,
+    );
+
+    try {
+      Gmail.Users.Messages.batchModify(
+        {
+          ids: batch.map(message => message.id),
+          removeLabelIds: ['INBOX'],
+        },
+        'me',
+      );
+
+      result.archivedMessageCount += batch.length;
+      batch.forEach(message => archivedThreadIds.add(message.threadId));
+      verboseLog('ARCHIVE BATCH', {
+        batchSize: batch.length,
+        messageIds: batch.map(message => message.id),
+        threadIds: [...new Set(batch.map(message => message.threadId))],
+      });
+    } catch (error) {
+      result.failedMessageCount += batch.length;
+      const message =
+        `Unable to archive ${batch.length} retention-labeled message(s): ` +
+          error.message;
+      result.errors.push(message);
+      console.error(message);
+    }
+  }
+
+  result.archivedConversationCount = archivedThreadIds.size;
+  return result;
 }
 
 /**
@@ -1972,6 +3662,7 @@ function deleteSystemNotificationLabelIfUnused() {
  *
  * @param {Array} records Deleted message records.
  * @param {Date} runDate Date the retention run occurred.
+ * @return {number} Number of summary emails sent.
  */
 function sendDeletionSummaries(records, runDate) {
   verboseLog('NOTIFICATION', {
@@ -1985,7 +3676,7 @@ function sendDeletionSummaries(records, runDate) {
   const notificationRetentionLabel = getOrCreateLabel(
     getNotificationRetentionLabelName(),
   );
-  const timeZone = Session.getScriptTimeZone();
+  const timeZone = getConfiguredRetentionTimeZone();
   const availableUpdate = getAvailableUpdate();
   verboseLog('NOTIFICATION LABELS', {
     recipient,
@@ -2072,6 +3763,8 @@ function sendDeletionSummaries(records, runDate) {
     notificationThread.moveToInbox();
     notificationThread.markUnread();
   });
+
+  return chunks.length;
 }
 
 /**
@@ -2153,6 +3846,15 @@ function buildHtmlSummary(
           </a>
         </strong>`
     : '';
+  const verboseWarning = getRetentionSettings().VERBOSE_LOGGING
+    ? `
+      <div style="margin:16px 0 0;padding:12px;border:1px solid #f9ab00;border-radius:6px;background:#fef7e0;color:#7a4f01;">
+        <strong>Verbose logging is enabled.</strong>
+        Execution logs may contain message subjects, label names, thread IDs,
+        and other mailbox metadata. Use verbose logging only while troubleshooting
+        and turn it off afterward.
+      </div>`
+    : '';
 
   return `
     <div style="font-family:Arial,sans-serif;font-size:14px;color:#202124;">
@@ -2181,6 +3883,7 @@ function buildHtmlSummary(
         ${escapeHtml(getNotificationRetentionLabelName())} and will be
         moved to Trash silently when its retention period expires.
       </p>
+      ${verboseWarning}
       <p style="margin:8px 0 0;color:#5f6368;font-size:12px;">
         Generated by
         <a href="${escapeHtml(RETENTION_CONFIG.PROJECT_REPOSITORY_URL)}">Gmail Retention Manager</a>
@@ -2229,6 +3932,14 @@ function buildPlainTextSummary(
     `This notification has ${getNotificationRetentionLabelName()} ` +
     'and will be moved to Trash silently when its retention period expires.',
   );
+  if (getRetentionSettings().VERBOSE_LOGGING) {
+    lines.push('');
+    lines.push(
+      'WARNING: Verbose logging is enabled. Execution logs may contain ' +
+      'message subjects, label names, thread IDs, and other mailbox metadata. ' +
+      'Use it only while troubleshooting and turn it off afterward.',
+    );
+  }
   lines.push('');
   lines.push(
     `Generated by Gmail Retention Manager v${RETENTION_CONFIG.VERSION}: ` +

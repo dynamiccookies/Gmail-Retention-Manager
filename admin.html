@@ -1,0 +1,3544 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+  <head>
+    <base target="_top">
+    <meta id="themeColorMeta" name="theme-color" content="#0b111b">
+    <style>
+      :root {
+        color-scheme: dark;
+        --background: #0b111b;
+        --surface: #151d29;
+        --surface-muted: #1b2533;
+        --text: #eef3f8;
+        --muted: #a9b4c3;
+        --border: #344154;
+        --primary: #2f6fed;
+        --primary-hover: #2863d8;
+        --primary-soft: #203252;
+        --primary-soft-text: #b8d1ff;
+        --link: #8ab4f8;
+        --success: #72d58d;
+        --success-soft: #153623;
+        --success-border: #2f6c43;
+        --success-message-text: #b7f3c5;
+        --warning: #f4c55c;
+        --warning-soft: #3c2e0d;
+        --warning-border: #7c6224;
+        --warning-message-text: #ffe099;
+        --danger: #ff938a;
+        --danger-soft: #3f1f22;
+        --danger-border: #7c3d41;
+        --danger-message-text: #ffb4ad;
+        --input-background: #101721;
+        --input-border: #526072;
+        --switch-off: #697586;
+        --secondary-background: #1b2533;
+        --secondary-hover: #243143;
+        --neutral-soft: #263142;
+        --neutral-text: #c2cad6;
+        --sticky-background: rgba(21, 29, 41, 0.96);
+        --focus-ring: rgba(79, 141, 247, 0.32);
+        --primary-contrast: #ffffff;
+        --spinner-track: #3b4656;
+        --overlay-background: rgba(4, 8, 15, 0.78);
+        --shadow: 0 1px 2px rgba(0, 0, 0, 0.32),
+          0 8px 24px rgba(0, 0, 0, 0.16);
+        --radius: 14px;
+      }
+
+      html[data-theme="light"] {
+        color-scheme: light;
+        --background: #f6f8fc;
+        --surface: #ffffff;
+        --surface-muted: #f8fafd;
+        --text: #1f2937;
+        --muted: #667085;
+        --border: #dfe3eb;
+        --primary: #1769e0;
+        --primary-hover: #0f56bc;
+        --primary-soft: #e8f0fe;
+        --primary-soft-text: #174ea6;
+        --link: #1769e0;
+        --success: #137333;
+        --success-soft: #e6f4ea;
+        --success-border: #a8dab5;
+        --success-message-text: #0d5f2a;
+        --warning: #8a5600;
+        --warning-soft: #fef7e0;
+        --warning-border: #f5c65b;
+        --warning-message-text: #704300;
+        --danger: #b3261e;
+        --danger-soft: #fce8e6;
+        --danger-border: #efb3ae;
+        --danger-message-text: #8c1d18;
+        --input-background: #ffffff;
+        --input-border: #bdc5d1;
+        --switch-off: #aeb7c4;
+        --secondary-background: #ffffff;
+        --secondary-hover: #f2f4f7;
+        --neutral-soft: #edf0f5;
+        --neutral-text: #475467;
+        --sticky-background: rgba(255, 255, 255, 0.96);
+        --focus-ring: rgba(23, 105, 224, 0.14);
+        --primary-contrast: #ffffff;
+        --spinner-track: #d8dee8;
+        --overlay-background: rgba(15, 23, 42, 0.48);
+        --shadow: 0 1px 2px rgba(16, 24, 40, 0.05),
+          0 1px 3px rgba(16, 24, 40, 0.1);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-width: 320px;
+        background: var(--background);
+        color: var(--text);
+        font-family: Arial, Helvetica, sans-serif;
+        line-height: 1.5;
+      }
+
+      body.scan-running {
+        overflow: hidden;
+      }
+
+      button,
+      input,
+      select {
+        font: inherit;
+      }
+
+      button,
+      input[type="checkbox"] {
+        cursor: pointer;
+      }
+
+      button:disabled,
+      input:disabled,
+      select:disabled {
+        cursor: not-allowed;
+        opacity: 0.6;
+      }
+
+      a {
+        color: var(--link);
+      }
+
+      [hidden] {
+        display: none !important;
+      }
+
+      .shell {
+        width: min(1120px, calc(100% - 32px));
+        margin: 0 auto;
+        padding: 28px 0 64px;
+      }
+
+      .topbar {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 20px;
+        margin-bottom: 22px;
+      }
+
+      .topbar-actions {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 10px;
+      }
+
+      .eyebrow {
+        margin: 0 0 4px;
+        color: var(--link);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+
+      h1,
+      h2,
+      h3,
+      p {
+        margin-top: 0;
+      }
+
+      h1 {
+        margin-bottom: 4px;
+        font-size: clamp(26px, 4vw, 38px);
+        line-height: 1.15;
+      }
+
+      h2 {
+        margin-bottom: 6px;
+        font-size: 21px;
+      }
+
+      h3 {
+        margin-bottom: 6px;
+        font-size: 16px;
+      }
+
+      .subtitle,
+      .help,
+      .metadata,
+      .card-detail {
+        color: var(--muted);
+      }
+
+      .subtitle,
+      .metadata,
+      .help,
+      .card-detail {
+        margin-bottom: 0;
+      }
+
+      .metadata {
+        font-size: 13px;
+      }
+
+      .version-pill,
+      .status-pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 7px;
+        min-height: 28px;
+        padding: 4px 10px;
+        border-radius: 999px;
+        font-size: 12px;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+
+      .version-pill {
+        background: var(--primary-soft);
+        color: var(--primary-soft-text);
+        text-decoration: none;
+      }
+
+      .version-pill:hover {
+        text-decoration: underline;
+      }
+
+      .status-pill::before {
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: currentColor;
+        content: "";
+      }
+
+      .status-success {
+        background: var(--success-soft);
+        color: var(--success);
+      }
+
+      .status-warning {
+        background: var(--warning-soft);
+        color: var(--warning);
+      }
+
+      .status-danger {
+        background: var(--danger-soft);
+        color: var(--danger);
+      }
+
+      .notice {
+        margin-bottom: 18px;
+        padding: 13px 15px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface);
+        font-size: 14px;
+      }
+
+      .notice-success {
+        border-color: var(--success-border);
+        background: var(--success-soft);
+        color: var(--success-message-text);
+      }
+
+      .notice-warning {
+        border-color: var(--warning-border);
+        background: var(--warning-soft);
+        color: var(--warning-message-text);
+      }
+
+      .notice-error {
+        border-color: var(--danger-border);
+        background: var(--danger-soft);
+        color: var(--danger-message-text);
+      }
+
+      .dashboard-grid {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 14px;
+        margin-bottom: 18px;
+      }
+
+      .card,
+      .panel {
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      .card {
+        min-height: 150px;
+        padding: 18px;
+      }
+
+      .card-label {
+        margin-bottom: 10px;
+        color: var(--muted);
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.04em;
+        text-transform: uppercase;
+      }
+
+      .card-value {
+        margin-bottom: 7px;
+        font-size: 17px;
+        font-weight: 700;
+      }
+
+      .card-detail {
+        font-size: 13px;
+      }
+
+      .schedule-detail-line {
+        display: block;
+      }
+
+      .run-panel {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        margin-bottom: 18px;
+        padding: 20px;
+      }
+
+      .run-panel p {
+        margin-bottom: 0;
+      }
+
+      .panel {
+        margin-bottom: 18px;
+        overflow: hidden;
+      }
+
+      .panel-header {
+        padding: 20px 22px 16px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .panel-header p {
+        margin-bottom: 0;
+        color: var(--muted);
+      }
+
+      .collapsible-panel > .panel-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        padding-bottom: 20px;
+        border-bottom: 0;
+        cursor: pointer;
+        list-style: none;
+        user-select: none;
+      }
+
+      .collapsible-panel > .panel-header::-webkit-details-marker {
+        display: none;
+      }
+
+      .collapsible-panel > .panel-header::after {
+        width: 11px;
+        height: 11px;
+        flex: 0 0 auto;
+        margin-right: 4px;
+        border-right: 2px solid var(--muted);
+        border-bottom: 2px solid var(--muted);
+        content: "";
+        transform: rotate(-45deg);
+        transition: transform 160ms ease;
+      }
+
+      .collapsible-panel > .panel-header:hover {
+        background: var(--surface-muted);
+      }
+
+      .collapsible-panel > .panel-header:focus-visible {
+        outline: 3px solid var(--focus-ring);
+        outline-offset: -3px;
+      }
+
+      .collapsible-panel[open] > .panel-header {
+        border-bottom: 1px solid var(--border);
+      }
+
+      .collapsible-panel[open] > .panel-header::after {
+        transform: rotate(45deg);
+      }
+
+      .panel-body {
+        padding: 22px;
+      }
+
+      .form-grid {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 20px;
+      }
+
+      .field-full {
+        grid-column: 1 / -1;
+      }
+
+      .field label,
+      .switch-label {
+        display: block;
+        margin-bottom: 7px;
+        font-size: 14px;
+        font-weight: 700;
+      }
+
+      .field input[type="text"],
+      .field input[type="time"],
+      .field select {
+        width: 100%;
+        min-height: 44px;
+        padding: 10px 12px;
+        border: 1px solid var(--input-border);
+        border-radius: 8px;
+        background: var(--input-background);
+        color: var(--text);
+        outline: none;
+      }
+
+      .field input[type="text"]:focus,
+      .field input[type="time"]:focus,
+      .field select:focus {
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px var(--focus-ring);
+      }
+
+      .field input[aria-invalid="true"],
+      .field select[aria-invalid="true"] {
+        border-color: var(--danger);
+      }
+
+      .help {
+        margin-top: 6px;
+        font-size: 12px;
+      }
+
+      .field-error {
+        min-height: 18px;
+        margin: 5px 0 0;
+        color: var(--danger);
+        font-size: 12px;
+      }
+
+      .switch-row {
+        display: flex;
+        align-items: flex-start;
+        justify-content: space-between;
+        gap: 18px;
+        padding: 14px 0;
+      }
+
+      .switch-row + .switch-row {
+        border-top: 1px solid var(--border);
+      }
+
+      .archive-setting-row {
+        margin-top: 18px;
+        padding-bottom: 0;
+        border-top: 1px solid var(--border);
+      }
+
+      .switch-copy {
+        flex: 1;
+      }
+
+      .switch-copy .switch-label {
+        margin-bottom: 3px;
+      }
+
+      .switch {
+        position: relative;
+        display: inline-flex;
+        flex: 0 0 auto;
+        width: 46px;
+        height: 26px;
+        margin-top: 2px;
+      }
+
+      .switch input {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        opacity: 0;
+      }
+
+      .switch-track {
+        width: 100%;
+        border-radius: 999px;
+        background: var(--switch-off);
+        transition: 150ms ease;
+      }
+
+      .switch-track::after {
+        position: absolute;
+        top: 4px;
+        left: 4px;
+        width: 18px;
+        height: 18px;
+        border-radius: 50%;
+        background: white;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
+        content: "";
+        transition: 150ms ease;
+      }
+
+      .switch input:checked + .switch-track {
+        background: var(--primary);
+      }
+
+      .switch input:checked + .switch-track::after {
+        transform: translateX(20px);
+      }
+
+      .switch input:focus-visible + .switch-track {
+        outline: 3px solid var(--focus-ring);
+        outline-offset: 2px;
+      }
+
+      .theme-control {
+        display: flex;
+        align-items: center;
+        gap: 9px;
+        min-height: 38px;
+        padding: 5px 9px 5px 11px;
+        border: 1px solid var(--border);
+        border-radius: 999px;
+        background: var(--surface);
+        color: var(--text);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .theme-control .switch {
+        width: 38px;
+        height: 22px;
+        margin: 0;
+      }
+
+      .theme-control .switch-track::after {
+        top: 3px;
+        left: 3px;
+        width: 16px;
+        height: 16px;
+      }
+
+      .theme-control .switch input:checked + .switch-track::after {
+        transform: translateX(16px);
+      }
+
+      .composite-input {
+        display: flex;
+        align-items: center;
+        min-height: 44px;
+        border: 1px solid var(--input-border);
+        border-radius: 8px;
+        background: var(--input-background);
+        overflow: hidden;
+      }
+
+      .composite-input:focus-within {
+        border-color: var(--primary);
+        box-shadow: 0 0 0 3px var(--focus-ring);
+      }
+
+      .composite-input:has(input[aria-invalid="true"]) {
+        border-color: var(--danger);
+      }
+
+      .field .composite-input input[type="text"] {
+        flex: 1 1 auto;
+        width: auto;
+        min-width: 0;
+        border: 0;
+        border-radius: 0;
+        box-shadow: none;
+      }
+
+      .field .composite-input input[type="text"]:focus {
+        border: 0;
+        box-shadow: none;
+      }
+
+      .composite-suffix {
+        display: flex;
+        flex-direction: column;
+        align-self: stretch;
+        align-items: flex-start;
+        justify-content: center;
+        flex: 0 0 auto;
+        gap: 2px;
+        padding: 5px 12px;
+        border-left: 1px solid var(--border);
+        background: var(--surface-muted);
+        color: var(--muted);
+        white-space: nowrap;
+      }
+
+      .composite-example-label {
+        color: var(--link);
+        font-size: 8px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+        line-height: 1;
+        text-transform: uppercase;
+      }
+
+      .composite-example-value {
+        font-family: Consolas, "Courier New", monospace;
+        font-size: 12px;
+        font-weight: 700;
+        line-height: 1.15;
+      }
+
+      .warning-box {
+        margin-top: 10px;
+        padding: 12px 13px;
+        border: 1px solid var(--warning-border);
+        border-radius: 8px;
+        background: var(--warning-soft);
+        color: var(--warning-message-text);
+        font-size: 13px;
+      }
+
+      .warning-box label {
+        display: flex;
+        align-items: flex-start;
+        gap: 8px;
+        margin-top: 10px;
+        font-weight: 700;
+      }
+
+      .warning-box input {
+        width: 18px;
+        height: 18px;
+        margin: 1px 0 0;
+      }
+
+      .schedule-form-actions {
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: 20px;
+        padding-top: 18px;
+        border-top: 1px solid var(--border);
+      }
+
+      .schedule-form-actions .unsaved {
+        margin-right: auto;
+      }
+
+      .schedule-guidance {
+        margin-top: 18px;
+      }
+
+      .backup-list {
+        display: grid;
+        gap: 12px;
+      }
+
+      .backup-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        margin-bottom: 16px;
+      }
+
+      .backup-toolbar .help {
+        max-width: 720px;
+      }
+
+      .backup-item {
+        padding: 16px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface-muted);
+      }
+
+      .backup-item-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      .backup-item h3 {
+        margin-bottom: 3px;
+      }
+
+      .backup-item-actions {
+        display: flex;
+        flex: 0 0 auto;
+        gap: 8px;
+      }
+
+      .backup-metadata {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 4px 10px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+
+      .backup-empty {
+        margin: 0;
+        padding: 18px;
+        border: 1px dashed var(--border);
+        border-radius: 10px;
+        color: var(--muted);
+        text-align: center;
+      }
+
+      .backup-retention-note {
+        margin-top: 14px;
+      }
+
+      .backup-restore-card {
+        width: min(680px, 100%);
+        max-height: calc(100vh - 48px);
+        overflow-y: auto;
+        text-align: left;
+      }
+
+      .backup-review-metadata {
+        margin-bottom: 18px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+
+      .backup-preview {
+        display: grid;
+        margin: 0;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        overflow: hidden;
+      }
+
+      .backup-preview-row {
+        display: grid;
+        grid-template-columns: minmax(190px, 0.8fr) minmax(0, 1.2fr);
+        gap: 16px;
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .backup-preview-row:last-child {
+        border-bottom: 0;
+      }
+
+      .backup-preview dt,
+      .backup-preview dd {
+        margin: 0;
+        overflow-wrap: anywhere;
+      }
+
+      .backup-preview dt {
+        color: var(--muted);
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .backup-preview dd {
+        font-family: Consolas, "Courier New", monospace;
+        font-size: 13px;
+      }
+
+      .backup-restore-warning {
+        margin-top: 18px;
+      }
+
+      .backup-confirmation {
+        display: flex;
+        align-items: flex-start;
+        gap: 9px;
+        margin-top: 16px;
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .backup-confirmation input {
+        width: 18px;
+        height: 18px;
+        flex: 0 0 auto;
+        margin: 1px 0 0;
+      }
+
+      .backup-restore-actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 10px;
+        margin-top: 20px;
+      }
+
+      .actions {
+        position: sticky;
+        bottom: 0;
+        z-index: 2;
+        display: flex;
+        align-items: center;
+        justify-content: flex-end;
+        gap: 10px;
+        padding: 14px 22px;
+        margin-bottom: 18px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--sticky-background);
+        backdrop-filter: blur(8px);
+      }
+
+      .unsaved {
+        margin-right: auto;
+        color: var(--warning);
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      .button {
+        min-height: 44px;
+        padding: 9px 16px;
+        border: 1px solid transparent;
+        border-radius: 8px;
+        font-weight: 700;
+      }
+
+      .button-primary {
+        background: var(--primary);
+        color: var(--primary-contrast);
+      }
+
+      .button-primary:hover:not(:disabled) {
+        background: var(--primary-hover);
+      }
+
+      .button-secondary {
+        border-color: var(--input-border);
+        background: var(--secondary-background);
+        color: var(--text);
+      }
+
+      .button-secondary:hover:not(:disabled) {
+        background: var(--secondary-hover);
+      }
+
+      .button-danger {
+        border-color: var(--danger-border);
+        background: var(--danger-soft);
+        color: var(--danger-message-text);
+      }
+
+      .button-danger:hover:not(:disabled) {
+        filter: brightness(1.08);
+      }
+
+      .loading-screen,
+      .fatal-screen {
+        display: grid;
+        min-height: 70vh;
+        place-items: center;
+        padding: 32px;
+        text-align: center;
+      }
+
+      .loading-card,
+      .fatal-card {
+        width: min(520px, 100%);
+        padding: 28px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      .spinner {
+        width: 30px;
+        height: 30px;
+        margin: 0 auto 14px;
+        border: 3px solid var(--spinner-track);
+        border-top-color: var(--primary);
+        border-radius: 50%;
+        animation: spin 800ms linear infinite;
+      }
+
+      .scan-progress-overlay {
+        position: fixed;
+        inset: 0;
+        z-index: 100;
+        display: grid;
+        place-items: center;
+        padding: 24px;
+        background: var(--overlay-background);
+        backdrop-filter: blur(5px);
+      }
+
+      .scan-progress-card {
+        width: min(480px, 100%);
+        padding: 32px;
+        border: 1px solid var(--border);
+        border-radius: var(--radius);
+        background: var(--surface);
+        box-shadow: 0 24px 70px rgba(0, 0, 0, 0.35);
+        text-align: center;
+      }
+
+      .scan-progress-card .spinner {
+        width: 52px;
+        height: 52px;
+        margin-bottom: 20px;
+        border-width: 4px;
+      }
+
+      .scan-progress-card h2 {
+        margin-bottom: 10px;
+      }
+
+      .scan-confirmation-icon {
+        display: grid;
+        width: 52px;
+        height: 52px;
+        margin: 0 auto 20px;
+        place-items: center;
+        border: 1px solid var(--warning-border);
+        border-radius: 50%;
+        background: var(--warning-soft);
+        color: var(--warning);
+        font-size: 27px;
+        font-weight: 800;
+      }
+
+      .scan-progress-description {
+        max-width: 390px;
+        margin: 0 auto;
+        color: var(--muted);
+      }
+
+      .scan-elapsed {
+        display: inline-flex;
+        margin: 20px 0 0;
+        padding: 6px 11px;
+        border-radius: 999px;
+        background: var(--primary-soft);
+        color: var(--primary-soft-text);
+        font-size: 13px;
+        font-weight: 700;
+        font-variant-numeric: tabular-nums;
+      }
+
+      .scan-confirmation-actions {
+        display: flex;
+        justify-content: center;
+        gap: 10px;
+        margin-top: 24px;
+      }
+
+      .scan-confirmation-actions .button {
+        min-width: 120px;
+      }
+
+      .resource-footer {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+
+      .resource-links {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+
+      @keyframes spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      @media (max-width: 900px) {
+        .dashboard-grid {
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+        }
+      }
+
+      @media (max-width: 640px) {
+        .scan-progress-overlay {
+          padding: 16px;
+        }
+
+        .scan-progress-card {
+          padding: 26px 20px;
+        }
+
+        .scan-confirmation-actions {
+          flex-direction: column;
+        }
+
+        .scan-confirmation-actions .button {
+          width: 100%;
+        }
+
+        .shell {
+          width: min(100% - 20px, 1120px);
+          padding-top: 18px;
+        }
+
+        .topbar,
+        .run-panel {
+          align-items: stretch;
+          flex-direction: column;
+        }
+
+        .topbar-actions {
+          justify-content: space-between;
+        }
+
+        .dashboard-grid,
+        .form-grid {
+          grid-template-columns: 1fr;
+        }
+
+        .field-full {
+          grid-column: auto;
+        }
+
+        .card {
+          min-height: 0;
+        }
+
+        .panel-header,
+        .panel-body {
+          padding-left: 16px;
+          padding-right: 16px;
+        }
+
+        .actions {
+          flex-wrap: wrap;
+          padding: 12px 16px;
+        }
+
+        .schedule-form-actions {
+          flex-wrap: wrap;
+        }
+
+        .backup-toolbar,
+        .backup-item-header,
+        .backup-item-actions,
+        .backup-restore-actions {
+          align-items: stretch;
+          flex-direction: column;
+        }
+
+        .backup-toolbar .button,
+        .backup-item-actions .button,
+        .backup-restore-actions .button {
+          width: 100%;
+        }
+
+        .backup-preview-row {
+          grid-template-columns: 1fr;
+          gap: 3px;
+        }
+
+        .actions .unsaved,
+        .schedule-form-actions .unsaved {
+          width: 100%;
+          margin: 0;
+        }
+
+        .actions .button,
+        .schedule-form-actions .button {
+          flex: 1;
+        }
+
+        .resource-footer {
+          align-items: flex-start;
+          flex-direction: column;
+          gap: 7px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <section class="loading-screen" id="loadingScreen">
+      <div class="loading-card">
+        <div class="spinner" aria-hidden="true"></div>
+        <h2>Loading Retention Manager</h2>
+        <p class="subtitle">Retrieving your private settings and status.</p>
+      </div>
+    </section>
+
+    <section class="fatal-screen" id="fatalScreen" hidden>
+      <div class="fatal-card">
+        <h2>Unable to load the admin page</h2>
+        <p id="fatalMessage"></p>
+        <button class="button button-primary" id="retryButton" type="button">
+          Try again
+        </button>
+      </div>
+    </section>
+
+    <section
+      class="scan-progress-overlay"
+      id="scanProgressOverlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="scanConfirmationTitle"
+      aria-describedby="scanConfirmationDescription"
+      tabindex="-1"
+      hidden
+    >
+      <div class="scan-progress-card">
+        <div id="scanConfirmationView">
+          <div class="scan-confirmation-icon" aria-hidden="true">!</div>
+          <p class="eyebrow">Confirmation required</p>
+          <h2 id="scanConfirmationTitle">Run Gmail retention now?</h2>
+          <p class="scan-progress-description" id="scanConfirmationDescription">
+            Any messages that are currently eligible under your saved retention
+            settings will be moved to Trash.
+          </p>
+          <div class="scan-confirmation-actions">
+            <button
+              class="button button-secondary"
+              id="cancelScanButton"
+              type="button"
+            >
+              Cancel
+            </button>
+            <button
+              class="button button-primary"
+              id="confirmScanButton"
+              type="button"
+            >
+              Run scan
+            </button>
+          </div>
+        </div>
+
+        <div id="scanProgressView" hidden>
+          <div class="spinner" aria-hidden="true"></div>
+          <p class="eyebrow">Retention scan in progress</p>
+          <h2 id="scanProgressTitle">Please wait while Gmail is scanned</h2>
+          <p class="scan-progress-description" id="scanProgressDescription">
+            This can take several minutes for a large mailbox. Keep this page open
+            until the scan finishes and the results appear.
+          </p>
+          <p class="scan-elapsed" id="scanElapsed">Elapsed time: 0:00</p>
+        </div>
+      </div>
+    </section>
+
+    <section
+      class="scan-progress-overlay"
+      id="backupRestoreOverlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="backupRestoreTitle"
+      aria-describedby="backupRestoreDescription backupRestoreWarning"
+      tabindex="-1"
+      hidden
+    >
+      <div class="scan-progress-card backup-restore-card">
+        <p class="eyebrow">Settings backup review</p>
+        <h2 id="backupRestoreTitle">Restore this settings backup?</h2>
+        <p id="backupRestoreDescription" class="backup-review-metadata"></p>
+        <dl class="backup-preview" id="backupPreview"></dl>
+        <div
+          class="warning-box backup-restore-warning"
+          id="backupRestoreWarning"
+        ></div>
+        <label class="backup-confirmation">
+          <input id="backupRestoreAcknowledgement" type="checkbox">
+          <span id="backupRestoreAcknowledgementText">
+            I understand these saved settings will replace the current settings.
+          </span>
+        </label>
+        <div class="backup-restore-actions">
+          <button
+            class="button button-secondary"
+            id="cancelBackupRestoreButton"
+            type="button"
+          >
+            Cancel
+          </button>
+          <button
+            class="button button-primary"
+            id="confirmBackupRestoreButton"
+            type="button"
+            disabled
+          >
+            Restore backup
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <section
+      class="scan-progress-overlay"
+      id="backupDeleteOverlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="backupDeleteTitle"
+      aria-describedby="backupDeleteDescription"
+      tabindex="-1"
+      hidden
+    >
+      <div class="scan-progress-card">
+        <div class="scan-confirmation-icon" aria-hidden="true">!</div>
+        <p class="eyebrow">Permanent backup deletion</p>
+        <h2 id="backupDeleteTitle">Delete this settings backup?</h2>
+        <p class="scan-progress-description" id="backupDeleteDescription"></p>
+        <div class="scan-confirmation-actions">
+          <button
+            class="button button-secondary"
+            id="cancelBackupDeleteButton"
+            type="button"
+          >
+            Cancel
+          </button>
+          <button
+            class="button button-danger"
+            id="confirmBackupDeleteButton"
+            type="button"
+          >
+            Delete backup
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <main class="shell" id="app" hidden>
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">Private administration</p>
+          <h1>Gmail Retention Manager</h1>
+          <p class="subtitle" id="ownerText"></p>
+        </div>
+        <div class="topbar-actions">
+          <a class="version-pill" id="versionPill" href="#" target="_blank" rel="noopener"></a>
+          <div class="theme-control">
+            <span id="themeModeLabel">Dark mode</span>
+            <label class="switch">
+              <input id="themeToggle" type="checkbox" checked aria-labelledby="themeModeLabel">
+              <span class="switch-track"></span>
+            </label>
+          </div>
+        </div>
+      </header>
+
+      <div class="notice" id="globalNotice" role="status" aria-live="polite" hidden></div>
+
+      <div class="notice notice-warning" id="verboseNotice" hidden>
+        <strong>Verbose logging is currently enabled.</strong>
+        Execution logs may contain message subjects, label names, thread IDs,
+        and other mailbox metadata. Use it only while troubleshooting and turn
+        it off afterward.
+      </div>
+
+      <section class="dashboard-grid" aria-label="Application status">
+        <article class="card">
+          <p class="card-label">Status</p>
+          <div id="statusPill"></div>
+          <p class="card-detail" id="statusDetail"></p>
+        </article>
+
+        <article class="card">
+          <p class="card-label">Schedule</p>
+          <p class="card-value" id="scheduleValue"></p>
+          <p class="card-detail" id="scheduleDetail"></p>
+        </article>
+
+        <article class="card">
+          <p class="card-label">Last successful scan</p>
+          <p class="card-value" id="lastSuccessValue"></p>
+          <p class="card-detail" id="lastSuccessDetail"></p>
+        </article>
+
+        <article class="card">
+          <p class="card-label">Last recorded error</p>
+          <p class="card-value" id="lastErrorValue"></p>
+          <p class="card-detail" id="lastErrorDetail"></p>
+        </article>
+      </section>
+
+      <section class="panel run-panel">
+        <div>
+          <h2>Run a retention scan</h2>
+          <p class="subtitle" id="runHelp">
+            Immediately process all eligible messages using the saved settings.
+          </p>
+        </div>
+        <button class="button button-primary" id="runButton" type="button">
+          Run retention scan now
+        </button>
+      </section>
+
+      <details class="panel collapsible-panel" id="scheduleSettingsPanel">
+        <summary class="panel-header">
+          <div>
+            <h2>Schedule settings</h2>
+            <p>Control when Gmail Retention Manager scans for eligible messages.</p>
+          </div>
+        </summary>
+
+        <form id="scheduleForm" novalidate>
+          <div class="panel-body">
+            <div class="switch-row">
+              <div class="switch-copy">
+                <label class="switch-label" for="scheduleEnabled">
+                  Scheduled scans
+                </label>
+                <p class="help">
+                  Turning this off removes the managed trigger but preserves the
+                  selected schedule for later. Manual scans remain available.
+                </p>
+              </div>
+              <label class="switch" aria-label="Scheduled scans">
+                <input id="scheduleEnabled" type="checkbox">
+                <span class="switch-track"></span>
+              </label>
+            </div>
+
+            <div class="form-grid" style="margin-top:18px;">
+              <div class="field">
+                <label for="scheduleFrequency">Scan frequency</label>
+                <select id="scheduleFrequency" name="scheduleFrequency"></select>
+                <p class="help">
+                  Daily is recommended. Short retention labels become eligible
+                  sooner but are still processed during the next scan.
+                </p>
+                <p class="field-error" id="scheduleFrequencyError"></p>
+              </div>
+
+              <div class="field" id="scheduleDailyTimeField">
+                <label for="scheduleDailyTime">Run around</label>
+                <input
+                  id="scheduleDailyTime"
+                  name="scheduleDailyTime"
+                  type="time"
+                  step="900"
+                >
+                <p class="help">
+                  Google schedules time-driven triggers approximately, generally
+                  within about 15 minutes of the selected time.
+                </p>
+                <p class="field-error" id="scheduleDailyTimeError"></p>
+              </div>
+
+              <div class="field field-full" id="scheduleTimeZoneField">
+                <label for="scheduleTimeZone">Time zone</label>
+                <select
+                  id="scheduleTimeZone"
+                  name="scheduleTimeZone"
+                ></select>
+                <p class="help">
+                  Used for the daily trigger, dashboard timestamps, and summary
+                  email timestamps. Select a supported time zone from the list.
+                </p>
+                <p class="field-error" id="scheduleTimeZoneError"></p>
+              </div>
+            </div>
+
+            <div
+              class="warning-box schedule-guidance"
+              id="scheduleFrequencyWarning"
+              hidden
+            ></div>
+
+            <div
+              class="warning-box schedule-guidance"
+              id="scheduleStatusWarning"
+              hidden
+            >
+              <span id="scheduleStatusWarningText"></span>
+              <label id="scheduleReplaceAcknowledgementRow" hidden>
+                <input id="scheduleReplaceAcknowledgement" type="checkbox">
+                <span>
+                  I understand the existing retention trigger(s) will be replaced
+                  or removed.
+                </span>
+              </label>
+            </div>
+
+            <div class="schedule-form-actions">
+              <span class="unsaved" id="scheduleUnsavedText" hidden>
+                Unsaved schedule changes
+              </span>
+              <button
+                class="button button-secondary"
+                id="scheduleResetButton"
+                type="button"
+                disabled
+              >
+                Reset
+              </button>
+              <button
+                class="button button-secondary"
+                id="scheduleRepairButton"
+                type="button"
+                hidden
+              >
+                Repair schedule
+              </button>
+              <button
+                class="button button-primary"
+                id="scheduleSaveButton"
+                type="submit"
+                disabled
+              >
+                Save schedule
+              </button>
+            </div>
+          </div>
+        </form>
+      </details>
+
+      <form id="settingsForm" novalidate>
+        <details class="panel collapsible-panel" id="retentionSettingsPanel">
+          <summary class="panel-header">
+            <div>
+              <h2>Retention settings</h2>
+              <p>Control the Gmail labels recognized by the retention process.</p>
+            </div>
+          </summary>
+
+          <div class="panel-body">
+            <div class="form-grid">
+              <div class="field">
+                <label for="rootLabel">Root label</label>
+                <div class="composite-input">
+                  <input id="rootLabel" name="rootLabel" type="text" autocomplete="off">
+                  <span class="composite-suffix" aria-hidden="true">
+                    <span class="composite-example-label">Example</span>
+                    <span class="composite-example-value">/1m</span>
+                  </span>
+                </div>
+                <p class="help">
+                  Edit the root portion. The shaded suffix is only an example;
+                  any supported retention duration can appear there.
+                </p>
+                <p class="field-error" id="rootLabelError"></p>
+
+                <div class="warning-box" id="rootLabelWarning" hidden>
+                  Changing this value does not rename existing Gmail labels or
+                  update Gmail filters. Labels under the previous root will no
+                  longer be managed.
+                  <label>
+                    <input id="rootLabelAcknowledgement" type="checkbox">
+                    <span>I understand the existing labels and filters are unchanged.</span>
+                  </label>
+                </div>
+              </div>
+
+              <div class="field">
+                <label for="starterLabels">Starter retention labels</label>
+                <input id="starterLabels" name="starterLabels" type="text" autocomplete="off">
+                <p class="help">
+                  Comma-separated durations, such as 7d, 1m. These are used only
+                  when the root label does not already exist.
+                </p>
+                <p class="field-error" id="starterLabelsError"></p>
+              </div>
+            </div>
+
+            <div class="switch-row archive-setting-row">
+              <div class="switch-copy">
+                <label class="switch-label" for="archiveOnLabel">
+                  Archive retention-labeled messages
+                </label>
+                <p class="help">
+                  Disabled by default. When enabled, the next scan removes only
+                  directly retention-labeled messages from Inbox. Their Trash
+                  deadline does not change, unrelated messages in the same
+                  conversation remain in Inbox, and generated summary emails are
+                  excluded. Turning this off does not return archived messages.
+                </p>
+              </div>
+              <label class="switch" aria-label="Archive retention-labeled messages">
+                <input id="archiveOnLabel" type="checkbox">
+                <span class="switch-track"></span>
+              </label>
+            </div>
+          </div>
+        </details>
+
+        <details class="panel collapsible-panel" id="summaryEmailSettingsPanel">
+          <summary class="panel-header">
+            <div>
+              <h2>Summary email settings</h2>
+              <p>Control the email sent after messages are moved to Trash.</p>
+            </div>
+          </summary>
+
+          <div class="panel-body">
+            <div class="form-grid">
+              <div class="field">
+                <label for="subjectPrefix">Summary email subject prefix</label>
+                <div class="composite-input">
+                  <input id="subjectPrefix" name="subjectPrefix" type="text" autocomplete="off">
+                  <span class="composite-suffix" aria-hidden="true">
+                    <span class="composite-example-label">Example</span>
+                    <span class="composite-example-value">3 messages deleted</span>
+                  </span>
+                </div>
+                <p class="help">
+                  Edit only the prefix. The shaded message count is example
+                  data and changes to match each summary email.
+                </p>
+                <p class="field-error" id="subjectPrefixError"></p>
+              </div>
+
+              <div class="field">
+                <label for="notificationRetention">Summary email retention period</label>
+                <input id="notificationRetention" name="notificationRetention" type="text" autocomplete="off">
+                <p class="help">
+                  Controls how long each generated summary email remains before
+                  it becomes eligible to move to Trash.
+                </p>
+                <p class="field-error" id="notificationRetentionError"></p>
+              </div>
+
+            </div>
+          </div>
+        </details>
+
+        <details class="panel collapsible-panel" id="advancedSettingsPanel">
+          <summary class="panel-header">
+            <div>
+              <h2>Advanced settings</h2>
+              <p>Diagnostic and internal options that normally should not be changed.</p>
+            </div>
+          </summary>
+
+          <div class="panel-body">
+            <div class="switch-row">
+              <div class="switch-copy">
+                <label class="switch-label" for="checkForUpdates">Check for updates</label>
+                <p class="help">
+                  Check the latest published GitHub release when a deletion
+                  summary email is generated.
+                </p>
+              </div>
+              <label class="switch" aria-label="Check for updates">
+                <input id="checkForUpdates" type="checkbox">
+                <span class="switch-track"></span>
+              </label>
+            </div>
+
+            <div class="switch-row">
+              <div class="switch-copy">
+                <label class="switch-label" for="verboseLogging">Verbose logging</label>
+                <p class="help">
+                  Records detailed mailbox-processing decisions for troubleshooting.
+                  This can increase execution time and log volume, and logs may
+                  contain message subjects, label names, thread IDs, and other
+                  mailbox metadata. Do not leave this enabled long-term.
+                </p>
+              </div>
+              <label class="switch" aria-label="Verbose logging">
+                <input id="verboseLogging" type="checkbox">
+                <span class="switch-track"></span>
+              </label>
+            </div>
+
+            <div class="field" style="margin-top:18px;">
+              <label for="systemLabel">System-notification label</label>
+              <input id="systemLabel" name="systemLabel" type="text" autocomplete="off">
+              <p class="help">
+                Internal child label used to prevent summary-email loops.
+              </p>
+              <p class="field-error" id="systemLabelError"></p>
+
+              <div class="warning-box" id="systemLabelWarning" hidden>
+                Changing this value may leave the previous internal label in Gmail.
+                <label>
+                  <input id="systemLabelAcknowledgement" type="checkbox">
+                  <span>I understand the old internal label may remain.</span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </details>
+
+      </form>
+
+      <details class="panel collapsible-panel" id="settingsBackupsPanel">
+        <summary class="panel-header">
+          <div>
+            <h2>Settings backups</h2>
+            <p>Review and restore the five most recent saved configurations.</p>
+          </div>
+        </summary>
+
+        <div class="panel-body">
+          <div class="backup-toolbar">
+            <p class="help">
+              Importing validates and adds a JSON backup here without changing
+              the active settings. Review it before choosing Restore.
+            </p>
+            <input
+              id="backupImportInput"
+              type="file"
+              accept="application/json,.json"
+              hidden
+            >
+            <button
+              class="button button-secondary"
+              id="importBackupButton"
+              type="button"
+            >
+              Import backup
+            </button>
+          </div>
+          <div
+            class="notice notice-warning"
+            id="backupStorageWarning"
+            hidden
+          ></div>
+          <p class="backup-empty" id="backupEmptyMessage" hidden>
+            No backups exist yet. The first backup will be created immediately
+            before you save a settings change.
+          </p>
+          <div class="backup-list" id="backupList"></div>
+          <p class="help backup-retention-note" id="backupRetentionNote"></p>
+        </div>
+      </details>
+
+      <div class="actions">
+        <span class="unsaved" id="unsavedText" hidden>Unsaved changes</span>
+        <button class="button button-secondary" id="discardButton" type="button" disabled>
+          Discard
+        </button>
+        <button
+          class="button button-primary"
+          id="saveButton"
+          type="submit"
+          form="settingsForm"
+          disabled
+        >
+          Save changes
+        </button>
+      </div>
+
+      <footer class="metadata resource-footer">
+        <span>Settings are stored privately with this Apps Script installation.</span>
+        <nav class="resource-links" aria-label="Project resources">
+          <a id="repositoryLink" href="#" target="_blank" rel="noopener">Code repository</a>
+          <span aria-hidden="true">&middot;</span>
+          <a id="releasesLink" href="#" target="_blank" rel="noopener">Releases</a>
+        </nav>
+      </footer>
+    </main>
+
+    <script>
+      const durationAliases = new Set([
+        'min', 'mins', 'minute', 'minutes',
+        'h', 'hr', 'hrs', 'hour', 'hours',
+        'd', 'day', 'days',
+        'w', 'wk', 'wks', 'week', 'weeks',
+        'm', 'mo', 'mos', 'mon', 'mons', 'month', 'months',
+        'y', 'yr', 'yrs', 'year', 'years',
+      ]);
+
+      const elements = {};
+      let initialSettings = null;
+      let initialSchedulePreferences = null;
+      let currentTrigger = null;
+      let applicationData = null;
+      let busy = false;
+      let dirty = false;
+      let scheduleBusy = false;
+      let scheduleDirty = false;
+      let backupBusy = false;
+      let settingsBackups = { limit: 5, warning: null, items: [] };
+      let selectedBackup = null;
+      let backupReviewReturnFocus = null;
+      let pendingDeleteBackup = null;
+      let backupDeleteReturnFocus = null;
+      let persistedTheme = 'dark';
+      let pendingTheme = null;
+      let themeSaveTimer = null;
+      let themeSaveInFlight = false;
+      let scanStartedAt = null;
+      let scanElapsedTimer = null;
+      let scanInProgress = false;
+
+      document.addEventListener('DOMContentLoaded', () => {
+        [
+          'themeColorMeta', 'themeToggle', 'themeModeLabel',
+          'loadingScreen', 'fatalScreen', 'fatalMessage', 'retryButton', 'app',
+          'scanProgressOverlay', 'scanConfirmationView', 'scanProgressView',
+          'cancelScanButton', 'confirmScanButton', 'scanElapsed',
+          'backupRestoreOverlay', 'backupRestoreTitle',
+          'backupRestoreDescription', 'backupPreview', 'backupRestoreWarning',
+          'backupRestoreAcknowledgement',
+          'backupRestoreAcknowledgementText', 'cancelBackupRestoreButton',
+          'confirmBackupRestoreButton',
+          'backupDeleteOverlay', 'backupDeleteTitle',
+          'backupDeleteDescription', 'cancelBackupDeleteButton',
+          'confirmBackupDeleteButton',
+          'ownerText', 'versionPill', 'globalNotice', 'verboseNotice',
+          'statusPill', 'statusDetail', 'scheduleValue', 'scheduleDetail',
+          'scheduleSettingsPanel', 'scheduleForm', 'scheduleEnabled',
+          'scheduleFrequency', 'scheduleFrequencyError',
+          'scheduleDailyTimeField', 'scheduleDailyTime',
+          'scheduleDailyTimeError', 'scheduleTimeZoneField',
+          'scheduleTimeZone',
+          'scheduleTimeZoneError', 'scheduleFrequencyWarning',
+          'scheduleStatusWarning', 'scheduleStatusWarningText',
+          'scheduleReplaceAcknowledgementRow',
+          'scheduleReplaceAcknowledgement', 'scheduleUnsavedText',
+          'scheduleResetButton', 'scheduleRepairButton', 'scheduleSaveButton',
+          'lastSuccessValue', 'lastSuccessDetail', 'lastErrorValue',
+          'lastErrorDetail', 'runButton', 'runHelp', 'settingsForm',
+          'rootLabel', 'rootLabelError', 'rootLabelWarning',
+          'rootLabelAcknowledgement', 'starterLabels', 'starterLabelsError',
+          'archiveOnLabel',
+          'subjectPrefix', 'subjectPrefixError', 'notificationRetention',
+          'notificationRetentionError', 'checkForUpdates', 'verboseLogging',
+          'systemLabel', 'systemLabelError', 'systemLabelWarning',
+          'systemLabelAcknowledgement', 'unsavedText',
+          'discardButton', 'saveButton', 'settingsBackupsPanel',
+          'backupStorageWarning', 'backupEmptyMessage', 'backupList',
+          'backupRetentionNote', 'backupImportInput', 'importBackupButton',
+          'repositoryLink', 'releasesLink',
+        ].forEach(id => {
+          elements[id] = document.getElementById(id);
+        });
+
+        elements.themeToggle.addEventListener('change', queueThemePreferenceSave);
+        elements.retryButton.addEventListener('click', loadAdminPage);
+        elements.runButton.addEventListener('click', runRetentionNow);
+        elements.cancelScanButton.addEventListener('click', closeScanConfirmation);
+        elements.confirmScanButton.addEventListener(
+          'click',
+          beginConfirmedRetentionScan,
+        );
+        elements.scanProgressOverlay.addEventListener(
+          'keydown',
+          handleScanModalKeydown,
+        );
+        elements.backupList.addEventListener('click', handleBackupListClick);
+        elements.backupRestoreAcknowledgement.addEventListener(
+          'change',
+          updateBackupRestoreButton,
+        );
+        elements.cancelBackupRestoreButton.addEventListener(
+          'click',
+          closeBackupRestoreReview,
+        );
+        elements.confirmBackupRestoreButton.addEventListener(
+          'click',
+          restoreSelectedBackup,
+        );
+        elements.backupRestoreOverlay.addEventListener(
+          'keydown',
+          handleBackupRestoreKeydown,
+        );
+        elements.cancelBackupDeleteButton.addEventListener(
+          'click',
+          closeBackupDeleteConfirmation,
+        );
+        elements.confirmBackupDeleteButton.addEventListener(
+          'click',
+          deleteSelectedBackup,
+        );
+        elements.backupDeleteOverlay.addEventListener(
+          'keydown',
+          handleBackupDeleteKeydown,
+        );
+        elements.importBackupButton.addEventListener(
+          'click',
+          () => elements.backupImportInput.click(),
+        );
+        elements.backupImportInput.addEventListener(
+          'change',
+          importSelectedBackupFile,
+        );
+        elements.scheduleForm.addEventListener('submit', saveSchedule);
+        elements.scheduleForm.addEventListener('input', handleScheduleChange);
+        elements.scheduleForm.addEventListener('change', handleScheduleChange);
+        elements.scheduleResetButton.addEventListener('click', resetScheduleForm);
+        elements.scheduleRepairButton.addEventListener('click', repairSchedule);
+        elements.discardButton.addEventListener('click', discardChanges);
+        elements.settingsForm.addEventListener('submit', saveSettings);
+        elements.settingsForm.addEventListener('input', handleFormChange);
+        elements.settingsForm.addEventListener('change', handleFormChange);
+        window.addEventListener('beforeunload', event => {
+          if (!dirty && !scheduleDirty && !scanInProgress && !backupBusy) {
+            return;
+          }
+          event.preventDefault();
+          event.returnValue = '';
+        });
+
+        loadAdminPage();
+      });
+
+      function loadAdminPage() {
+        elements.loadingScreen.hidden = false;
+        elements.fatalScreen.hidden = true;
+        elements.app.hidden = true;
+
+        google.script.run
+          .withSuccessHandler(data => {
+            applicationData = data.application;
+            initialSettings = clone(data.settings);
+            renderApplication(data);
+            elements.loadingScreen.hidden = true;
+            elements.app.hidden = false;
+          })
+          .withFailureHandler(showFatalError)
+          .getAdminPageData();
+      }
+
+      function applyTheme(theme) {
+        const resolvedTheme = theme === 'light' ? 'light' : 'dark';
+        document.documentElement.dataset.theme = resolvedTheme;
+        elements.themeToggle.checked = resolvedTheme === 'dark';
+        elements.themeModeLabel.textContent = resolvedTheme === 'dark'
+          ? 'Dark mode'
+          : 'Light mode';
+        elements.themeColorMeta.content = resolvedTheme === 'dark'
+          ? '#0b111b'
+          : '#f6f8fc';
+      }
+
+      function queueThemePreferenceSave() {
+        const requestedTheme = elements.themeToggle.checked ? 'dark' : 'light';
+        applyTheme(requestedTheme);
+        pendingTheme = requestedTheme;
+        scheduleThemePreferenceSave(150);
+      }
+
+      function scheduleThemePreferenceSave(delay) {
+        if (themeSaveTimer !== null) {
+          window.clearTimeout(themeSaveTimer);
+        }
+        themeSaveTimer = window.setTimeout(flushThemePreferenceSave, delay);
+      }
+
+      function flushThemePreferenceSave() {
+        themeSaveTimer = null;
+
+        if (themeSaveInFlight || pendingTheme === null) {
+          return;
+        }
+
+        const requestedTheme = pendingTheme;
+        pendingTheme = null;
+
+        if (requestedTheme === persistedTheme) {
+          return;
+        }
+
+        themeSaveInFlight = true;
+        google.script.run
+          .withSuccessHandler(preferences => {
+            persistedTheme = preferences.theme;
+            themeSaveInFlight = false;
+
+            if (pendingTheme === persistedTheme) {
+              pendingTheme = null;
+            }
+            if (pendingTheme !== null) {
+              scheduleThemePreferenceSave(0);
+            }
+          })
+          .withFailureHandler(error => {
+            themeSaveInFlight = false;
+            showNotice(
+              `The display theme changed, but the preference could not be saved: ` +
+                `${getErrorMessage(error)}`,
+              'error',
+            );
+            if (pendingTheme !== null) {
+              scheduleThemePreferenceSave(0);
+            }
+          })
+          .saveAdminTheme(requestedTheme);
+      }
+
+      function renderApplication(data) {
+        persistedTheme = data.adminPreferences && data.adminPreferences.theme
+          ? data.adminPreferences.theme
+          : 'dark';
+        pendingTheme = null;
+        applyTheme(persistedTheme);
+        elements.versionPill.textContent = `Version ${data.application.version}`;
+        elements.versionPill.href = data.application.currentReleaseUrl;
+        elements.versionPill.title =
+          `View the v${data.application.version} release`;
+        elements.ownerText.textContent = data.application.ownerEmail
+          ? `Signed in as ${data.application.ownerEmail}`
+          : 'Private owner installation';
+        elements.repositoryLink.href = data.application.repositoryUrl;
+        elements.releasesLink.href = data.application.releasesUrl;
+        renderSettings(data.settings);
+        renderRuntime(data.runtime);
+        renderTrigger(data.trigger);
+        renderScheduleForm(data.trigger);
+        renderSettingsBackups(data.backups);
+        updateDirtyState();
+      }
+
+      function renderSettings(settings) {
+        elements.rootLabel.value = settings.ROOT_LABEL;
+        elements.archiveOnLabel.checked = settings.ARCHIVE_ON_LABEL;
+        elements.starterLabels.value =
+          settings.DEFAULT_RETENTION_LABEL_SUFFIXES.join(', ');
+        elements.subjectPrefix.value = settings.NOTIFICATION_SUBJECT_PREFIX;
+        elements.notificationRetention.value =
+          settings.NOTIFICATION_RETENTION_LABEL_SUFFIX;
+        elements.checkForUpdates.checked = settings.CHECK_FOR_UPDATES;
+        elements.verboseLogging.checked = settings.VERBOSE_LOGGING;
+        elements.systemLabel.value = settings.SYSTEM_NOTIFICATION_LABEL_SUFFIX;
+        elements.rootLabelAcknowledgement.checked = false;
+        elements.systemLabelAcknowledgement.checked = false;
+        elements.verboseNotice.hidden = !settings.VERBOSE_LOGGING;
+        clearValidationErrors();
+      }
+
+      function renderSettingsBackups(backups) {
+        settingsBackups = backups && Array.isArray(backups.items)
+          ? clone(backups)
+          : { limit: 5, warning: null, items: [] };
+        elements.backupList.textContent = '';
+        elements.backupStorageWarning.hidden = !settingsBackups.warning;
+        elements.backupStorageWarning.textContent = settingsBackups.warning || '';
+        elements.backupEmptyMessage.hidden = settingsBackups.items.length > 0;
+        elements.backupRetentionNote.textContent =
+          `Up to ${settingsBackups.limit || 5} backups are retained. Restoring ` +
+          'a backup first preserves the current settings. Schedule settings are ' +
+          'managed separately and are not changed by a restore. Adding another ' +
+          'backup when the list is full removes the oldest one.';
+
+        settingsBackups.items.forEach(backup => {
+          const item = document.createElement('article');
+          item.className = 'backup-item';
+
+          const header = document.createElement('div');
+          header.className = 'backup-item-header';
+
+          const copy = document.createElement('div');
+          const title = document.createElement('h3');
+          title.textContent = formatTimestamp(backup.createdAt);
+          const metadata = document.createElement('div');
+          metadata.className = 'backup-metadata';
+          [
+            `Created before: ${getBackupReasonLabel(backup.reason)}`,
+            ...(backup.importedAt
+              ? [`Imported ${formatTimestamp(backup.importedAt)}`]
+              : []),
+            `App v${backup.applicationVersion}`,
+            `Settings schema ${backup.configurationSchemaVersion}`,
+          ].forEach(value => {
+            const span = document.createElement('span');
+            span.textContent = value;
+            metadata.appendChild(span);
+          });
+          copy.append(title, metadata);
+
+          const actions = document.createElement('div');
+          actions.className = 'backup-item-actions';
+          [
+            ['Review', 'review', 'button button-secondary'],
+            ['Download', 'download', 'button button-secondary'],
+            ['Delete', 'delete', 'button button-danger'],
+          ].forEach(([label, action, className]) => {
+            const button = document.createElement('button');
+            button.className = className;
+            button.type = 'button';
+            button.dataset.backupId = backup.id;
+            button.dataset.backupAction = action;
+            button.textContent = label;
+            actions.appendChild(button);
+          });
+
+          header.append(copy, actions);
+          item.appendChild(header);
+          elements.backupList.appendChild(item);
+        });
+
+        updateBackupReviewControls();
+      }
+
+      function getBackupReasonLabel(reason) {
+        const labels = {
+          settings_change: 'settings change',
+          restore: 'another restore',
+          import: 'settings import',
+          factory_reset: 'factory reset',
+          application_update: 'application update',
+        };
+        return labels[reason] || 'settings operation';
+      }
+
+      function downloadSettingsBackup(backup) {
+        const exportData = {
+          fileType: 'gmail-retention-manager-settings-backup',
+          exportSchemaVersion: 1,
+          exportedAt: new Date().toISOString(),
+          backup: {
+            id: backup.id,
+            createdAt: backup.createdAt,
+            importedAt: backup.importedAt || null,
+            reason: backup.reason,
+            applicationVersion: backup.applicationVersion,
+            configurationSchemaVersion: backup.configurationSchemaVersion,
+            configuration: {
+              schemaVersion: backup.configurationSchemaVersion,
+              settings: clone(backup.settings),
+            },
+          },
+        };
+        const blob = new Blob(
+          [JSON.stringify(exportData, null, 2)],
+          { type: 'application/json' },
+        );
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        const timestamp = backup.createdAt.replace(/[:.]/g, '-');
+        link.href = url;
+        link.download =
+          `gmail-retention-manager-settings-backup-${timestamp}.json`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(url), 0);
+        showNotice('Settings backup downloaded.', 'success');
+      }
+
+      function importSelectedBackupFile(event) {
+        const file = event.target.files && event.target.files[0];
+        elements.backupImportInput.value = '';
+        if (!file || backupBusy) {
+          return;
+        }
+        if (dirty || scheduleDirty) {
+          showNotice(
+            'Save or discard all unsaved changes before importing a backup.',
+            'error',
+          );
+          return;
+        }
+        if (file.size > 100000) {
+          showNotice('The selected backup file is unexpectedly large.', 'error');
+          return;
+        }
+
+        const reader = new FileReader();
+        setBackupImportBusy(true);
+        reader.onload = () => {
+          google.script.run
+            .withSuccessHandler(response => {
+              renderSettingsBackups(response.backups);
+              elements.settingsBackupsPanel.open = true;
+              setBackupImportBusy(false);
+              showNotice(
+                'Backup imported successfully. Review it before restoring.',
+                'success',
+              );
+            })
+            .withFailureHandler(error => {
+              setBackupImportBusy(false);
+              showNotice(`Backup import failed: ${getErrorMessage(error)}`, 'error');
+            })
+            .importRetentionSettingsBackupFromAdmin({
+              content: String(reader.result || ''),
+              fileName: file.name,
+            });
+        };
+        reader.onerror = () => {
+          setBackupImportBusy(false);
+          showNotice('The selected backup file could not be read.', 'error');
+        };
+        reader.readAsText(file);
+      }
+
+      function setBackupImportBusy(isBusy) {
+        backupBusy = isBusy;
+        elements.importBackupButton.textContent = isBusy
+          ? 'Importing…'
+          : 'Import backup';
+        updateDirtyState();
+        updateScheduleDirtyState();
+        updateBackupReviewControls();
+      }
+
+      function openBackupDeleteConfirmation(backup, returnFocus) {
+        pendingDeleteBackup = clone(backup);
+        backupDeleteReturnFocus = returnFocus;
+        elements.backupDeleteDescription.textContent =
+          `The backup from ${formatTimestamp(backup.createdAt)} will be ` +
+          'permanently removed. This does not change the active settings.';
+        elements.cancelBackupDeleteButton.disabled = false;
+        elements.confirmBackupDeleteButton.disabled = false;
+        elements.confirmBackupDeleteButton.textContent = 'Delete backup';
+        document.body.classList.add('scan-running');
+        elements.app.setAttribute('inert', '');
+        elements.backupDeleteOverlay.hidden = false;
+        window.requestAnimationFrame(() => {
+          elements.cancelBackupDeleteButton.focus();
+        });
+      }
+
+      function closeBackupDeleteConfirmation() {
+        if (backupBusy) {
+          return;
+        }
+
+        elements.backupDeleteOverlay.hidden = true;
+        elements.app.removeAttribute('inert');
+        document.body.classList.remove('scan-running');
+        pendingDeleteBackup = null;
+        const returnFocus = backupDeleteReturnFocus;
+        backupDeleteReturnFocus = null;
+        if (returnFocus && document.contains(returnFocus)) {
+          returnFocus.focus();
+        } else {
+          elements.settingsBackupsPanel.querySelector('summary').focus();
+        }
+      }
+
+      function handleBackupDeleteKeydown(event) {
+        if (backupBusy) {
+          return;
+        }
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          closeBackupDeleteConfirmation();
+          return;
+        }
+        if (event.key !== 'Tab') {
+          return;
+        }
+
+        if (
+          event.shiftKey &&
+          document.activeElement === elements.cancelBackupDeleteButton
+        ) {
+          event.preventDefault();
+          elements.confirmBackupDeleteButton.focus();
+        } else if (
+          !event.shiftKey &&
+          document.activeElement === elements.confirmBackupDeleteButton
+        ) {
+          event.preventDefault();
+          elements.cancelBackupDeleteButton.focus();
+        }
+      }
+
+      function deleteSelectedBackup() {
+        if (!pendingDeleteBackup || backupBusy) {
+          return;
+        }
+
+        setBackupDeleteBusy(true);
+        google.script.run
+          .withSuccessHandler(response => {
+            renderSettingsBackups(response.backups);
+            setBackupDeleteBusy(false);
+            closeBackupDeleteConfirmation();
+            showNotice('Settings backup deleted.', 'success');
+          })
+          .withFailureHandler(error => {
+            setBackupDeleteBusy(false);
+            elements.backupDeleteDescription.textContent =
+              `Delete failed: ${getErrorMessage(error)}`;
+          })
+          .deleteRetentionSettingsBackupFromAdmin({
+            backupId: pendingDeleteBackup.id,
+            confirmDelete: true,
+          });
+      }
+
+      function setBackupDeleteBusy(isBusy) {
+        backupBusy = isBusy;
+        elements.cancelBackupDeleteButton.disabled = isBusy;
+        elements.confirmBackupDeleteButton.disabled = isBusy;
+        elements.confirmBackupDeleteButton.textContent = isBusy
+          ? 'Deleting…'
+          : 'Delete backup';
+        elements.backupDeleteOverlay.setAttribute(
+          'aria-busy',
+          isBusy ? 'true' : 'false',
+        );
+        updateDirtyState();
+        updateScheduleDirtyState();
+        updateBackupReviewControls();
+      }
+
+      function handleBackupListClick(event) {
+        const button = event.target.closest('button[data-backup-id]');
+        if (!button) {
+          return;
+        }
+        if (dirty || scheduleDirty) {
+          showNotice(
+            'Save or discard all unsaved changes before reviewing a backup.',
+            'error',
+          );
+          return;
+        }
+        if (busy || scheduleBusy || backupBusy) {
+          return;
+        }
+
+        const backup = settingsBackups.items.find(
+          item => item.id === button.dataset.backupId,
+        );
+        if (!backup) {
+          showNotice('That settings backup is no longer available.', 'error');
+          return;
+        }
+
+        const action = button.dataset.backupAction;
+        if (action === 'download') {
+          downloadSettingsBackup(backup);
+        } else if (action === 'delete') {
+          openBackupDeleteConfirmation(backup, button);
+        } else {
+          openBackupRestoreReview(backup, button);
+        }
+      }
+
+      function openBackupRestoreReview(backup, returnFocus) {
+        selectedBackup = clone(backup);
+        backupReviewReturnFocus = returnFocus;
+        elements.backupRestoreDescription.textContent =
+          `${formatTimestamp(backup.createdAt)} · Created before ` +
+          `${getBackupReasonLabel(backup.reason)} · App ` +
+          `v${backup.applicationVersion} · Settings schema ` +
+          `${backup.configurationSchemaVersion}` +
+          (backup.importedAt
+            ? ` · Imported ${formatTimestamp(backup.importedAt)}`
+            : '');
+        renderBackupPreview(backup.settings);
+        renderBackupRestoreWarning(backup.settings);
+        elements.backupRestoreAcknowledgement.checked = false;
+        elements.backupRestoreAcknowledgement.disabled = false;
+        elements.cancelBackupRestoreButton.disabled = false;
+        elements.confirmBackupRestoreButton.textContent = 'Restore backup';
+        updateBackupRestoreButton();
+        document.body.classList.add('scan-running');
+        elements.app.setAttribute('inert', '');
+        elements.backupRestoreOverlay.hidden = false;
+        window.requestAnimationFrame(() => {
+          elements.cancelBackupRestoreButton.focus();
+        });
+      }
+
+      function renderBackupPreview(settings) {
+        const rows = [
+          ['Root label', settings.ROOT_LABEL],
+          [
+            'Archive retention-labeled messages',
+            settings.ARCHIVE_ON_LABEL ? 'On' : 'Off',
+          ],
+          [
+            'Starter retention labels',
+            settings.DEFAULT_RETENTION_LABEL_SUFFIXES.join(', '),
+          ],
+          ['Summary email subject prefix', settings.NOTIFICATION_SUBJECT_PREFIX],
+          [
+            'Summary email retention period',
+            settings.NOTIFICATION_RETENTION_LABEL_SUFFIX,
+          ],
+          ['Check for updates', settings.CHECK_FOR_UPDATES ? 'On' : 'Off'],
+          ['Verbose logging', settings.VERBOSE_LOGGING ? 'On' : 'Off'],
+          ['System-notification label', settings.SYSTEM_NOTIFICATION_LABEL_SUFFIX],
+        ];
+
+        elements.backupPreview.textContent = '';
+        rows.forEach(([label, value]) => {
+          const row = document.createElement('div');
+          row.className = 'backup-preview-row';
+          const term = document.createElement('dt');
+          term.textContent = label;
+          const description = document.createElement('dd');
+          description.textContent = value || '(blank)';
+          row.append(term, description);
+          elements.backupPreview.appendChild(row);
+        });
+      }
+
+      function renderBackupRestoreWarning(settings) {
+        const rootChanged = settings.ROOT_LABEL !== initialSettings.ROOT_LABEL;
+        const systemChanged = settings.SYSTEM_NOTIFICATION_LABEL_SUFFIX !==
+          initialSettings.SYSTEM_NOTIFICATION_LABEL_SUFFIX;
+        const warnings = [
+          'The current settings will be backed up before this restore begins.',
+        ];
+
+        if (rootChanged) {
+          warnings.push(
+            'The root label will change, but existing Gmail labels and filters ' +
+              'will not be renamed or updated.',
+          );
+        }
+        if (systemChanged) {
+          warnings.push(
+            'The system-notification label will change and the current internal ' +
+              'label may remain in Gmail.',
+          );
+        }
+
+        elements.backupRestoreWarning.className =
+          'warning-box backup-restore-warning';
+        elements.backupRestoreWarning.textContent = warnings.join(' ');
+        elements.backupRestoreAcknowledgementText.textContent = rootChanged ||
+          systemChanged
+          ? 'I understand these settings will replace the current settings and ' +
+            'existing Gmail labels or filters will not be reorganized.'
+          : 'I understand these saved settings will replace the current settings.';
+      }
+
+      function updateBackupRestoreButton() {
+        elements.confirmBackupRestoreButton.disabled = backupBusy ||
+          !elements.backupRestoreAcknowledgement.checked;
+      }
+
+      function updateBackupReviewControls() {
+        const disabled = busy || scheduleBusy || backupBusy || dirty || scheduleDirty;
+        elements.importBackupButton.disabled = disabled;
+        elements.backupImportInput.disabled = disabled;
+        elements.backupList
+          .querySelectorAll('button[data-backup-id]')
+          .forEach(button => {
+            button.disabled = disabled;
+          });
+      }
+
+      function closeBackupRestoreReview() {
+        if (backupBusy) {
+          return;
+        }
+
+        elements.backupRestoreOverlay.hidden = true;
+        elements.app.removeAttribute('inert');
+        document.body.classList.remove('scan-running');
+        selectedBackup = null;
+        const returnFocus = backupReviewReturnFocus;
+        backupReviewReturnFocus = null;
+        if (returnFocus && document.contains(returnFocus)) {
+          returnFocus.focus();
+        } else {
+          elements.settingsBackupsPanel.querySelector('summary').focus();
+        }
+      }
+
+      function handleBackupRestoreKeydown(event) {
+        if (backupBusy) {
+          return;
+        }
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          closeBackupRestoreReview();
+          return;
+        }
+        if (event.key !== 'Tab') {
+          return;
+        }
+
+        const controls = [
+          elements.backupRestoreAcknowledgement,
+          elements.cancelBackupRestoreButton,
+          elements.confirmBackupRestoreButton,
+        ].filter(control => !control.disabled);
+        const first = controls[0];
+        const last = controls[controls.length - 1];
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+
+      function restoreSelectedBackup() {
+        if (
+          !selectedBackup ||
+          !elements.backupRestoreAcknowledgement.checked ||
+          backupBusy
+        ) {
+          return;
+        }
+
+        const rootChanged = selectedBackup.settings.ROOT_LABEL !==
+          initialSettings.ROOT_LABEL;
+        const systemChanged =
+          selectedBackup.settings.SYSTEM_NOTIFICATION_LABEL_SUFFIX !==
+            initialSettings.SYSTEM_NOTIFICATION_LABEL_SUFFIX;
+        setBackupRestoreBusy(true);
+
+        google.script.run
+          .withSuccessHandler(response => {
+            initialSettings = clone(response.settings);
+            renderSettings(response.settings);
+            renderSettingsBackups(response.backups);
+            updateWarnings();
+            setBackupRestoreBusy(false);
+            updateDirtyState();
+            closeBackupRestoreReview();
+            showNotice(
+              'Settings restored successfully. Your previous settings were ' +
+                'saved as the newest backup.',
+              'success',
+            );
+          })
+          .withFailureHandler(error => {
+            setBackupRestoreBusy(false);
+            elements.backupRestoreWarning.className =
+              'notice notice-error backup-restore-warning';
+            elements.backupRestoreWarning.textContent =
+              `Restore failed: ${getErrorMessage(error)}`;
+          })
+          .restoreRetentionSettingsBackupFromAdmin({
+            backupId: selectedBackup.id,
+            confirmRestore: true,
+            acknowledgements: {
+              rootLabelChange: rootChanged,
+              systemLabelChange: systemChanged,
+            },
+          });
+      }
+
+      function setBackupRestoreBusy(isBusy) {
+        backupBusy = isBusy;
+        elements.backupRestoreAcknowledgement.disabled = isBusy;
+        elements.cancelBackupRestoreButton.disabled = isBusy;
+        elements.confirmBackupRestoreButton.textContent = isBusy
+          ? 'Restoring…'
+          : 'Restore backup';
+        elements.backupRestoreOverlay.setAttribute(
+          'aria-busy',
+          isBusy ? 'true' : 'false',
+        );
+        updateBackupRestoreButton();
+        updateDirtyState();
+        updateScheduleDirtyState();
+        updateBackupReviewControls();
+      }
+
+      function renderTrigger(trigger) {
+        const statusClass = trigger.status === 'enabled'
+          ? 'status-success'
+          : trigger.status === 'warning'
+            ? 'status-warning'
+            : 'status-danger';
+        const label = trigger.status === 'enabled'
+          ? 'Enabled'
+          : trigger.status === 'warning'
+            ? 'Attention needed'
+            : 'Disabled';
+
+        setStatusPill(elements.statusPill, label, statusClass);
+        elements.statusDetail.textContent = trigger.summary;
+        elements.scheduleDetail.textContent = '';
+
+        const frequency = getScheduleFrequencyOption(
+          trigger,
+          trigger.preferences.frequency,
+        );
+        const dailyLine = formatDailyScheduleLine(trigger.preferences);
+
+        if (trigger.state === 'managed') {
+          elements.scheduleValue.textContent = frequency.label;
+          appendScheduleDetailLine(
+            trigger.preferences.frequency === 'daily'
+              ? dailyLine
+              : `Approximately ${frequency.runsPerDay} runs per day`,
+          );
+          appendScheduleDetailLine('Managed by Retention Manager');
+          return;
+        }
+
+        if (trigger.state === 'disabled') {
+          elements.scheduleValue.textContent = 'Disabled';
+          appendScheduleDetailLine(
+            trigger.preferences.frequency === 'daily'
+              ? `Saved: ${frequency.label} · ${dailyLine}`
+              : `Saved: ${frequency.label}`,
+          );
+          appendScheduleDetailLine('Managed by Retention Manager');
+          return;
+        }
+
+        if (trigger.state === 'setup') {
+          elements.scheduleValue.textContent = 'Not configured';
+          appendScheduleDetailLine(
+            `Default: ${frequency.label} · ${dailyLine}`,
+          );
+          appendScheduleDetailLine('Enable it in Schedule settings');
+          return;
+        }
+
+        if (trigger.state === 'unmanaged') {
+          elements.scheduleValue.textContent = 'Existing trigger';
+          appendScheduleDetailLine('Frequency unavailable');
+          appendScheduleDetailLine('Created outside Retention Manager');
+          return;
+        }
+
+        if (trigger.state === 'missing') {
+          elements.scheduleValue.textContent = frequency.label;
+          appendScheduleDetailLine('Managed trigger is missing');
+          appendScheduleDetailLine('Repair required');
+          return;
+        }
+
+        elements.scheduleValue.textContent = trigger.triggerCount === 1
+          ? 'Schedule needs attention'
+          : `${trigger.triggerCount} detected triggers`;
+        appendScheduleDetailLine('Repair required');
+      }
+
+      function appendScheduleDetailLine(text) {
+        const line = document.createElement('span');
+        line.className = 'schedule-detail-line';
+        line.textContent = text;
+        elements.scheduleDetail.appendChild(line);
+      }
+
+      function getScheduleFrequencyOption(trigger, value) {
+        return trigger.frequencyOptions.find(option => option.value === value) || {
+          value,
+          label: value,
+          runsPerDay: 0,
+        };
+      }
+
+      function formatDailyScheduleLine(preferences) {
+        const [hourValue, minuteValue] = preferences.dailyTime
+          .split(':')
+          .map(Number);
+        const meridiem = hourValue >= 12 ? 'PM' : 'AM';
+        const hour = hourValue % 12 || 12;
+        const minute = String(minuteValue).padStart(2, '0');
+        const abbreviation = getTimeZoneAbbreviation(preferences.timeZone);
+        return `Around ${hour}:${minute} ${meridiem} ${abbreviation}`;
+      }
+
+      function getTimeZoneAbbreviation(timeZone) {
+        try {
+          const parts = new Intl.DateTimeFormat('en-US', {
+            timeZone,
+            timeZoneName: 'short',
+          }).formatToParts(new Date());
+          const timeZoneName = parts.find(part => part.type === 'timeZoneName');
+          return timeZoneName ? timeZoneName.value : timeZone;
+        } catch (error) {
+          return timeZone;
+        }
+      }
+
+      function renderScheduleForm(trigger) {
+        currentTrigger = clone(trigger);
+        populateScheduleFrequencyOptions(
+          trigger.frequencyOptions,
+          trigger.preferences.frequency,
+        );
+        populateScheduleTimeZoneOptions(trigger.preferences.timeZone);
+
+        elements.scheduleEnabled.checked = trigger.preferences.enabled;
+        elements.scheduleFrequency.value = trigger.preferences.frequency;
+        elements.scheduleDailyTime.value = trigger.preferences.dailyTime;
+        elements.scheduleTimeZone.value = trigger.preferences.timeZone;
+        elements.scheduleReplaceAcknowledgement.checked = false;
+        clearScheduleValidationErrors();
+
+        initialSchedulePreferences = clone(getScheduleFormPreferences());
+        scheduleDirty = false;
+        renderScheduleStatusWarning(trigger);
+        updateScheduleFields();
+        updateScheduleDirtyState();
+
+        if (trigger.state === 'setup' || trigger.status === 'warning') {
+          elements.scheduleSettingsPanel.open = true;
+        }
+      }
+
+      function populateScheduleFrequencyOptions(options, selectedValue) {
+        elements.scheduleFrequency.textContent = '';
+        options.forEach(option => {
+          const element = document.createElement('option');
+          element.value = option.value;
+          element.textContent = option.label;
+          element.selected = option.value === selectedValue;
+          elements.scheduleFrequency.appendChild(element);
+        });
+      }
+
+      function populateScheduleTimeZoneOptions(selectedTimeZone) {
+        let timeZones = [];
+        try {
+          if (typeof Intl.supportedValuesOf === 'function') {
+            timeZones = Intl.supportedValuesOf('timeZone');
+          }
+        } catch (error) {
+          timeZones = [];
+        }
+
+        const browserTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const fallbackTimeZones = [
+          selectedTimeZone,
+          browserTimeZone,
+          'America/New_York',
+          'America/Chicago',
+          'America/Denver',
+          'America/Phoenix',
+          'America/Los_Angeles',
+          'America/Anchorage',
+          'Pacific/Honolulu',
+          'Etc/UTC',
+        ];
+        const uniqueTimeZones = [...new Set([
+          ...fallbackTimeZones.filter(Boolean),
+          ...timeZones,
+        ])];
+
+        elements.scheduleTimeZone.textContent = '';
+        uniqueTimeZones.forEach(timeZone => {
+          const option = document.createElement('option');
+          option.value = timeZone;
+          option.textContent = timeZone;
+          elements.scheduleTimeZone.appendChild(option);
+        });
+      }
+
+      function renderScheduleStatusWarning(trigger) {
+        const warningMessages = {
+          unmanaged:
+            'The existing trigger was created outside Retention Manager, so its ' +
+            'frequency cannot be read. Saving will replace it with the selected schedule.',
+          duplicate:
+            `${trigger.triggerCount} retention triggers were detected. Repairing ` +
+            'the schedule will leave one verified managed trigger.',
+          missing:
+            'The saved managed trigger is missing. Repairing will recreate it ' +
+            'with the schedule shown above.',
+          invalid_configuration:
+            'The saved schedule metadata is invalid. Saving or repairing will ' +
+            'replace it with the schedule shown above.',
+        };
+        const message = warningMessages[trigger.state];
+
+        elements.scheduleStatusWarning.hidden = !message;
+        elements.scheduleStatusWarningText.textContent = message || '';
+        elements.scheduleReplaceAcknowledgementRow.hidden =
+          !trigger.requiresExistingTriggerConfirmation;
+      }
+
+      function getScheduleFormPreferences() {
+        return {
+          enabled: elements.scheduleEnabled.checked,
+          frequency: elements.scheduleFrequency.value,
+          dailyTime: elements.scheduleDailyTime.value,
+          timeZone: elements.scheduleTimeZone.value.trim(),
+        };
+      }
+
+      function schedulePreferencesEqual(first, second) {
+        return Boolean(first && second) &&
+          first.enabled === second.enabled &&
+          first.frequency === second.frequency &&
+          first.dailyTime === second.dailyTime &&
+          first.timeZone === second.timeZone;
+      }
+
+      function handleScheduleChange() {
+        updateScheduleFields();
+        validateScheduleForm(false);
+        updateScheduleDirtyState();
+      }
+
+      function updateScheduleFields() {
+        const preferences = getScheduleFormPreferences();
+        const daily = preferences.frequency === 'daily';
+        elements.scheduleDailyTimeField.hidden = !daily;
+        elements.scheduleTimeZoneField.hidden = !daily;
+
+        const frequency = currentTrigger
+          ? getScheduleFrequencyOption(currentTrigger, preferences.frequency)
+          : null;
+        elements.scheduleFrequencyWarning.hidden = daily || !frequency;
+        elements.scheduleFrequencyWarning.textContent = frequency && !daily
+          ? `${frequency.label} starts when you save this schedule. The first ` +
+            'scan should occur approximately one interval later, and subsequent ' +
+            'scans continue from that cadence. Google may shift execution times ' +
+            `slightly. This setting can run up to ${frequency.runsPerDay} times ` +
+            'per day and consumes more Apps Script execution quota. Daily remains ' +
+            'the recommended default.'
+          : '';
+      }
+
+      function updateScheduleDirtyState() {
+        if (!initialSchedulePreferences || !currentTrigger) {
+          return;
+        }
+
+        const preferences = getScheduleFormPreferences();
+        scheduleDirty = !schedulePreferencesEqual(
+          preferences,
+          initialSchedulePreferences,
+        );
+        const setupRequired = currentTrigger.state === 'setup';
+        const unmanagedRequired = currentTrigger.state === 'unmanaged';
+        const repairRequired = currentTrigger.needsRepair;
+        const confirmationRequired =
+          currentTrigger.requiresExistingTriggerConfirmation;
+        const confirmed = elements.scheduleReplaceAcknowledgement.checked;
+        const controlsBusy = busy || scheduleBusy || backupBusy;
+
+        [
+          elements.scheduleEnabled,
+          elements.scheduleFrequency,
+          elements.scheduleDailyTime,
+          elements.scheduleTimeZone,
+          elements.scheduleReplaceAcknowledgement,
+        ].forEach(control => {
+          control.disabled = controlsBusy;
+        });
+
+        elements.scheduleUnsavedText.hidden = !scheduleDirty;
+        elements.scheduleResetButton.disabled = controlsBusy || !scheduleDirty;
+        elements.scheduleRepairButton.hidden = !repairRequired;
+        elements.scheduleRepairButton.disabled = controlsBusy ||
+          (confirmationRequired && !confirmed);
+        elements.scheduleSaveButton.hidden = repairRequired;
+        elements.scheduleSaveButton.disabled = controlsBusy ||
+          (!scheduleDirty && !setupRequired && !unmanagedRequired) ||
+          (confirmationRequired && !confirmed);
+        updateBackupReviewControls();
+
+        if (scheduleBusy) {
+          return;
+        }
+        if (unmanagedRequired) {
+          elements.scheduleSaveButton.textContent = preferences.enabled
+            ? 'Replace existing trigger'
+            : 'Remove existing trigger';
+        } else if (setupRequired) {
+          elements.scheduleSaveButton.textContent = preferences.enabled
+            ? 'Enable daily schedule'
+            : 'Save disabled schedule';
+        } else if (
+          initialSchedulePreferences.enabled &&
+          !preferences.enabled
+        ) {
+          elements.scheduleSaveButton.textContent = 'Disable schedule';
+        } else if (
+          !initialSchedulePreferences.enabled &&
+          preferences.enabled
+        ) {
+          elements.scheduleSaveButton.textContent = 'Enable schedule';
+        } else {
+          elements.scheduleSaveButton.textContent = 'Update schedule';
+        }
+      }
+
+      function validateScheduleForm(showAllErrors) {
+        const preferences = getScheduleFormPreferences();
+        const frequencyValid = currentTrigger &&
+          currentTrigger.frequencyOptions.some(
+            option => option.value === preferences.frequency,
+          );
+        let timeZoneValid = Boolean(preferences.timeZone);
+
+        if (timeZoneValid) {
+          try {
+            new Intl.DateTimeFormat(undefined, {
+              timeZone: preferences.timeZone,
+            }).format(new Date());
+          } catch (error) {
+            timeZoneValid = false;
+          }
+        }
+
+        let valid = setFieldValidity(
+          elements.scheduleFrequency,
+          elements.scheduleFrequencyError,
+          Boolean(frequencyValid),
+          'Select a supported schedule frequency.',
+          showAllErrors,
+        );
+        valid = setFieldValidity(
+          elements.scheduleDailyTime,
+          elements.scheduleDailyTimeError,
+          /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(preferences.dailyTime),
+          'Select a valid daily execution time.',
+          showAllErrors,
+        ) && valid;
+        valid = setFieldValidity(
+          elements.scheduleTimeZone,
+          elements.scheduleTimeZoneError,
+          timeZoneValid,
+          'Enter a supported time zone, such as America/Chicago.',
+          showAllErrors,
+        ) && valid;
+
+        return valid;
+      }
+
+      function clearScheduleValidationErrors() {
+        [
+          [elements.scheduleFrequency, elements.scheduleFrequencyError],
+          [elements.scheduleDailyTime, elements.scheduleDailyTimeError],
+          [elements.scheduleTimeZone, elements.scheduleTimeZoneError],
+        ].forEach(([input, error]) => {
+          input.setAttribute('aria-invalid', 'false');
+          error.textContent = '';
+        });
+      }
+
+      function resetScheduleForm() {
+        if (!initialSchedulePreferences) {
+          return;
+        }
+
+        elements.scheduleEnabled.checked = initialSchedulePreferences.enabled;
+        elements.scheduleFrequency.value = initialSchedulePreferences.frequency;
+        elements.scheduleDailyTime.value = initialSchedulePreferences.dailyTime;
+        elements.scheduleTimeZone.value = initialSchedulePreferences.timeZone;
+        elements.scheduleReplaceAcknowledgement.checked = false;
+        clearScheduleValidationErrors();
+        updateScheduleFields();
+        updateScheduleDirtyState();
+        clearNotice();
+      }
+
+      function saveSchedule(event) {
+        event.preventDefault();
+        submitScheduleOperation(false);
+      }
+
+      function repairSchedule() {
+        submitScheduleOperation(true);
+      }
+
+      function submitScheduleOperation(repair) {
+        clearNotice();
+
+        if (!validateScheduleForm(true)) {
+          elements.scheduleSettingsPanel.open = true;
+          showNotice('Correct the highlighted schedule settings.', 'error');
+          const invalid = elements.scheduleForm.querySelector('[aria-invalid="true"]');
+          if (invalid) {
+            invalid.focus();
+          }
+          return;
+        }
+        if (
+          currentTrigger.requiresExistingTriggerConfirmation &&
+          !elements.scheduleReplaceAcknowledgement.checked
+        ) {
+          showNotice(
+            'Acknowledge the existing-trigger cleanup before continuing.',
+            'error',
+          );
+          elements.scheduleReplaceAcknowledgement.focus();
+          return;
+        }
+
+        setScheduleBusy(true, repair ? 'Repairing…' : 'Saving…');
+        const request = {
+          preferences: getScheduleFormPreferences(),
+          confirmExistingTriggers:
+            elements.scheduleReplaceAcknowledgement.checked,
+        };
+        const runner = google.script.run
+          .withSuccessHandler(response => {
+            applicationData.timeZone = response.trigger.preferences.timeZone;
+            renderTrigger(response.trigger);
+            renderScheduleForm(response.trigger);
+            setScheduleBusy(false);
+            const messages = {
+              enabled: 'Scheduled scans enabled successfully.',
+              disabled: 'Scheduled scans disabled. Manual scans remain available.',
+              repaired: 'Retention schedule repaired successfully.',
+              updated: 'Retention schedule updated successfully.',
+            };
+            showNotice(messages[response.action] || 'Schedule saved.', 'success');
+          })
+          .withFailureHandler(error => {
+            setScheduleBusy(false);
+            showNotice(`Schedule update failed: ${getErrorMessage(error)}`, 'error');
+            refreshRuntimeOnly(false);
+          });
+
+        if (repair) {
+          runner.repairRetentionScheduleFromAdmin(request);
+        } else {
+          runner.saveRetentionScheduleFromAdmin(request);
+        }
+      }
+
+      function setScheduleBusy(isBusy, actionText) {
+        scheduleBusy = isBusy;
+        elements.scheduleSaveButton.textContent = isBusy
+          ? actionText
+          : 'Save schedule';
+        elements.scheduleRepairButton.textContent = isBusy
+          ? actionText
+          : 'Repair schedule';
+        updateScheduleDirtyState();
+        updateDirtyState();
+      }
+
+      function renderRuntime(runtime) {
+        const successfulAt = runtime.lastSuccessfulRunAt;
+        const successfulResult = runtime.lastSuccessfulResult ||
+          (runtime.lastResult && runtime.lastResult.status === 'success'
+            ? runtime.lastResult
+            : null);
+        elements.lastSuccessValue.textContent = successfulAt
+          ? formatTimestamp(successfulAt)
+          : 'No successful scan recorded';
+        elements.lastSuccessDetail.textContent = successfulAt
+          ? formatRunResult(successfulResult)
+          : 'Run history will appear after the next successful scan.';
+
+        if (!runtime.lastErrorAt) {
+          elements.lastErrorValue.textContent = 'None recorded';
+          elements.lastErrorDetail.textContent =
+            'Errors caught by Retention Manager will appear here.';
+          return;
+        }
+
+        const resolved = successfulAt &&
+          new Date(successfulAt).getTime() > new Date(runtime.lastErrorAt).getTime();
+        elements.lastErrorValue.textContent = resolved
+          ? `Resolved · ${formatTimestamp(runtime.lastErrorAt)}`
+          : formatTimestamp(runtime.lastErrorAt);
+        elements.lastErrorDetail.textContent = runtime.lastErrorMessage ||
+          'An unspecified error was recorded.';
+      }
+
+      function setStatusPill(container, label, className) {
+        container.textContent = '';
+        const pill = document.createElement('span');
+        pill.className = `status-pill ${className}`;
+        pill.textContent = label;
+        container.appendChild(pill);
+      }
+
+      function formatRunResult(result) {
+        if (!result) {
+          return 'Detailed results were not recorded for this earlier scan.';
+        }
+        if (result.status === 'skipped') {
+          return result.reason || 'The run was skipped.';
+        }
+
+        const reviewed = Number(result.reviewedConversationCount || 0);
+        const moved = Number(result.movedMessageCount || 0);
+        const summaries = Number(result.summaryEmailCount || 0);
+        const archived = Number(result.archivedMessageCount || 0);
+        const archivedConversations = Number(
+          result.archivedConversationCount || 0,
+        );
+        const archiveFailures =
+          Number(result.archiveLookupFailureCount || 0) +
+          Number(result.archiveFailedMessageCount || 0);
+        const duration = formatRunDuration(result.startedAt, result.completedAt);
+        const durationText = duration ? `Run time: ${duration}. ` : '';
+        const archiveText = result.archiveOnLabelEnabled
+          ? `archived ${archived} Inbox message(s) from ` +
+            `${archivedConversations} conversation(s); `
+          : '';
+        const archiveWarningText = archiveFailures > 0
+          ? `${archiveFailures} archive warning(s); `
+          : '';
+        return `${durationText}Reviewed ${reviewed} conversation(s); ` +
+          archiveText +
+          archiveWarningText +
+          `moved ${moved} message(s); ` +
+          `sent ${summaries} summary email(s).`;
+      }
+
+      function formatRunDuration(startedAt, completedAt) {
+        const started = new Date(startedAt);
+        const completed = new Date(completedAt);
+        const elapsedMilliseconds = completed.getTime() - started.getTime();
+
+        if (!Number.isFinite(elapsedMilliseconds) || elapsedMilliseconds < 0) {
+          return null;
+        }
+        if (elapsedMilliseconds < 1000) {
+          return 'less than 1 second';
+        }
+
+        const totalSeconds = Math.max(1, Math.round(elapsedMilliseconds / 1000));
+        const hours = Math.floor(totalSeconds / 3600);
+        const minutes = Math.floor((totalSeconds % 3600) / 60);
+        const seconds = totalSeconds % 60;
+        const parts = [];
+
+        if (hours > 0) {
+          parts.push(`${hours} hour${hours === 1 ? '' : 's'}`);
+        }
+        if (minutes > 0) {
+          parts.push(`${minutes} minute${minutes === 1 ? '' : 's'}`);
+        }
+        if (seconds > 0 || parts.length === 0) {
+          parts.push(`${seconds} second${seconds === 1 ? '' : 's'}`);
+        }
+
+        return parts.join(' ');
+      }
+
+      function formatTimestamp(value) {
+        const date = new Date(value);
+        if (Number.isNaN(date.getTime())) {
+          return 'Unknown time';
+        }
+
+        try {
+          return new Intl.DateTimeFormat(undefined, {
+            dateStyle: 'medium',
+            timeStyle: 'short',
+            timeZone: applicationData.timeZone,
+          }).format(date);
+        } catch (error) {
+          return date.toLocaleString();
+        }
+      }
+
+      function handleFormChange() {
+        updateWarnings();
+        validateForm(false);
+        updateDirtyState();
+      }
+
+      function getFormSettings() {
+        return {
+          VERBOSE_LOGGING: elements.verboseLogging.checked,
+          ROOT_LABEL: elements.rootLabel.value.trim(),
+          ARCHIVE_ON_LABEL: elements.archiveOnLabel.checked,
+          DEFAULT_RETENTION_LABEL_SUFFIXES: elements.starterLabels.value
+            .split(',')
+            .map(value => value.trim())
+            .filter(Boolean),
+          NOTIFICATION_SUBJECT_PREFIX: elements.subjectPrefix.value.trim(),
+          NOTIFICATION_RETENTION_LABEL_SUFFIX:
+            elements.notificationRetention.value.trim(),
+          SYSTEM_NOTIFICATION_LABEL_SUFFIX: elements.systemLabel.value.trim(),
+          CHECK_FOR_UPDATES: elements.checkForUpdates.checked,
+        };
+      }
+
+      function updateWarnings() {
+        if (!initialSettings) {
+          return;
+        }
+
+        const settings = getFormSettings();
+        const rootChanged = settings.ROOT_LABEL !== initialSettings.ROOT_LABEL;
+        const systemChanged = settings.SYSTEM_NOTIFICATION_LABEL_SUFFIX !==
+          initialSettings.SYSTEM_NOTIFICATION_LABEL_SUFFIX;
+
+        elements.rootLabelWarning.hidden = !rootChanged;
+        elements.systemLabelWarning.hidden = !systemChanged;
+
+        if (!rootChanged) {
+          elements.rootLabelAcknowledgement.checked = false;
+        }
+        if (!systemChanged) {
+          elements.systemLabelAcknowledgement.checked = false;
+        }
+      }
+
+      function updateDirtyState() {
+        if (!initialSettings) {
+          return;
+        }
+
+        dirty = !retentionSettingsEqual(getFormSettings(), initialSettings);
+        const controlsBusy = busy || scheduleBusy || backupBusy;
+        elements.unsavedText.hidden = !dirty;
+        elements.discardButton.disabled = controlsBusy || !dirty;
+        elements.saveButton.disabled = controlsBusy || !dirty;
+        elements.runButton.disabled = controlsBusy || dirty;
+        elements.runHelp.textContent = dirty
+          ? 'Save or discard your changes before running a retention scan.'
+          : 'Immediately process all eligible messages using the saved settings.';
+        updateBackupReviewControls();
+      }
+
+      function retentionSettingsEqual(first, second) {
+        if (!first || !second) {
+          return false;
+        }
+
+        const firstStarterLabels = first.DEFAULT_RETENTION_LABEL_SUFFIXES;
+        const secondStarterLabels = second.DEFAULT_RETENTION_LABEL_SUFFIXES;
+        const starterLabelsMatch =
+          Array.isArray(firstStarterLabels) &&
+          Array.isArray(secondStarterLabels) &&
+          firstStarterLabels.length === secondStarterLabels.length &&
+          firstStarterLabels.every(
+            (value, index) => value === secondStarterLabels[index],
+          );
+
+        return (
+          first.VERBOSE_LOGGING === second.VERBOSE_LOGGING &&
+          first.ROOT_LABEL === second.ROOT_LABEL &&
+          first.ARCHIVE_ON_LABEL === second.ARCHIVE_ON_LABEL &&
+          starterLabelsMatch &&
+          first.NOTIFICATION_SUBJECT_PREFIX ===
+            second.NOTIFICATION_SUBJECT_PREFIX &&
+          first.NOTIFICATION_RETENTION_LABEL_SUFFIX ===
+            second.NOTIFICATION_RETENTION_LABEL_SUFFIX &&
+          first.SYSTEM_NOTIFICATION_LABEL_SUFFIX ===
+            second.SYSTEM_NOTIFICATION_LABEL_SUFFIX &&
+          first.CHECK_FOR_UPDATES === second.CHECK_FOR_UPDATES
+        );
+      }
+
+      function validateDuration(value) {
+        const match = String(value).trim().match(/^(\d+)\s*([a-z]+)$/i);
+        if (!match || Number(match[1]) <= 0 || !durationAliases.has(match[2].toLowerCase())) {
+          return false;
+        }
+        return Number.isSafeInteger(Number(match[1]));
+      }
+
+      function validateForm(showAllErrors) {
+        const settings = getFormSettings();
+        let valid = true;
+
+        valid = setFieldValidity(
+          elements.rootLabel,
+          elements.rootLabelError,
+          Boolean(settings.ROOT_LABEL),
+          'Enter a root Gmail label.',
+          showAllErrors,
+        ) && valid;
+
+        const invalidStarter = settings.DEFAULT_RETENTION_LABEL_SUFFIXES.find(
+          value => !validateDuration(value),
+        );
+        const normalizedStarter = settings.DEFAULT_RETENTION_LABEL_SUFFIXES.map(
+          value => value.toLowerCase(),
+        );
+        const duplicateStarter = normalizedStarter.some(
+          (value, index) => normalizedStarter.indexOf(value) !== index,
+        );
+        let starterError = '';
+        if (invalidStarter) {
+          starterError = `${invalidStarter} is not a supported retention duration.`;
+        } else if (duplicateStarter) {
+          starterError = 'Starter retention labels cannot contain duplicates.';
+        }
+        valid = setFieldValidity(
+          elements.starterLabels,
+          elements.starterLabelsError,
+          !starterError,
+          starterError,
+          showAllErrors,
+        ) && valid;
+
+        valid = setFieldValidity(
+          elements.subjectPrefix,
+          elements.subjectPrefixError,
+          true,
+          '',
+          showAllErrors,
+        ) && valid;
+
+        valid = setFieldValidity(
+          elements.notificationRetention,
+          elements.notificationRetentionError,
+          validateDuration(settings.NOTIFICATION_RETENTION_LABEL_SUFFIX),
+          'Enter a supported positive duration, such as 1d or 12 hours.',
+          showAllErrors,
+        ) && valid;
+
+        const systemIsDuration = validateDuration(
+          settings.SYSTEM_NOTIFICATION_LABEL_SUFFIX,
+        );
+        valid = setFieldValidity(
+          elements.systemLabel,
+          elements.systemLabelError,
+          Boolean(settings.SYSTEM_NOTIFICATION_LABEL_SUFFIX) && !systemIsDuration,
+          systemIsDuration
+            ? 'The internal label cannot also be a retention duration.'
+            : 'Enter an internal system-notification label.',
+          showAllErrors,
+        ) && valid;
+
+        return valid;
+      }
+
+      function setFieldValidity(input, errorElement, valid, message, showAllErrors) {
+        input.setAttribute('aria-invalid', valid ? 'false' : 'true');
+        errorElement.textContent = !valid && showAllErrors ? message : '';
+        return valid;
+      }
+
+      function clearValidationErrors() {
+        [
+          [elements.rootLabel, elements.rootLabelError],
+          [elements.starterLabels, elements.starterLabelsError],
+          [elements.subjectPrefix, elements.subjectPrefixError],
+          [elements.notificationRetention, elements.notificationRetentionError],
+          [elements.systemLabel, elements.systemLabelError],
+        ].forEach(([input, error]) => {
+          input.setAttribute('aria-invalid', 'false');
+          error.textContent = '';
+        });
+      }
+
+      function saveSettings(event) {
+        event.preventDefault();
+        clearNotice();
+
+        if (!validateForm(true)) {
+          showNotice('Correct the highlighted settings before saving.', 'error');
+          focusFirstInvalidField();
+          return;
+        }
+
+        const settings = getFormSettings();
+        const rootChanged = settings.ROOT_LABEL !== initialSettings.ROOT_LABEL;
+        const systemChanged = settings.SYSTEM_NOTIFICATION_LABEL_SUFFIX !==
+          initialSettings.SYSTEM_NOTIFICATION_LABEL_SUFFIX;
+
+        if (rootChanged && !elements.rootLabelAcknowledgement.checked) {
+          showNotice('Acknowledge the root-label consequences before saving.', 'error');
+          elements.rootLabelAcknowledgement.focus();
+          return;
+        }
+        if (systemChanged && !elements.systemLabelAcknowledgement.checked) {
+          showNotice('Acknowledge the internal-label consequence before saving.', 'error');
+          elements.systemLabelAcknowledgement.focus();
+          return;
+        }
+        if (
+          settings.VERBOSE_LOGGING &&
+          !initialSettings.VERBOSE_LOGGING &&
+          !window.confirm(
+            'Enable verbose logging? Detailed logs may contain mailbox metadata. ' +
+            'Use this only while troubleshooting and turn it off afterward.',
+          )
+        ) {
+          return;
+        }
+
+        setBusy(true, 'Saving…');
+        google.script.run
+          .withSuccessHandler(response => {
+            initialSettings = clone(response.settings);
+            renderSettings(response.settings);
+            renderSettingsBackups(response.backups);
+            updateWarnings();
+            setBusy(false);
+            updateDirtyState();
+            showNotice('Settings saved successfully.', 'success');
+          })
+          .withFailureHandler(error => {
+            setBusy(false);
+            updateDirtyState();
+            showNotice(getErrorMessage(error), 'error');
+          })
+          .saveAdminPageSettings({
+            settings,
+            acknowledgements: {
+              rootLabelChange: elements.rootLabelAcknowledgement.checked,
+              systemLabelChange: elements.systemLabelAcknowledgement.checked,
+            },
+          });
+      }
+
+      function discardChanges() {
+        if (!dirty || window.confirm('Discard all unsaved setting changes?')) {
+          renderSettings(initialSettings);
+          updateWarnings();
+          updateDirtyState();
+          clearNotice();
+        }
+      }
+
+      function openScanConfirmation() {
+        elements.scanConfirmationView.hidden = false;
+        elements.scanProgressView.hidden = true;
+        elements.scanProgressOverlay.setAttribute(
+          'aria-labelledby',
+          'scanConfirmationTitle',
+        );
+        elements.scanProgressOverlay.setAttribute(
+          'aria-describedby',
+          'scanConfirmationDescription',
+        );
+        document.body.classList.add('scan-running');
+        elements.app.setAttribute('inert', '');
+        elements.scanProgressOverlay.hidden = false;
+        window.requestAnimationFrame(() => elements.cancelScanButton.focus());
+      }
+
+      function closeScanConfirmation() {
+        if (scanInProgress) {
+          return;
+        }
+
+        elements.scanProgressOverlay.hidden = true;
+        elements.app.removeAttribute('inert');
+        document.body.classList.remove('scan-running');
+        elements.runButton.focus();
+      }
+
+      function handleScanModalKeydown(event) {
+        if (scanInProgress) {
+          return;
+        }
+
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          closeScanConfirmation();
+          return;
+        }
+
+        if (event.key !== 'Tab') {
+          return;
+        }
+
+        if (event.shiftKey && document.activeElement === elements.cancelScanButton) {
+          event.preventDefault();
+          elements.confirmScanButton.focus();
+        } else if (
+          !event.shiftKey &&
+          document.activeElement === elements.confirmScanButton
+        ) {
+          event.preventDefault();
+          elements.cancelScanButton.focus();
+        }
+      }
+
+      function showScanProgress() {
+        if (scanElapsedTimer !== null) {
+          window.clearInterval(scanElapsedTimer);
+        }
+
+        scanInProgress = true;
+        scanStartedAt = Date.now();
+        updateScanElapsed();
+        scanElapsedTimer = window.setInterval(updateScanElapsed, 1000);
+        elements.scanConfirmationView.hidden = true;
+        elements.scanProgressView.hidden = false;
+        elements.scanProgressOverlay.setAttribute(
+          'aria-labelledby',
+          'scanProgressTitle',
+        );
+        elements.scanProgressOverlay.setAttribute(
+          'aria-describedby',
+          'scanProgressDescription scanElapsed',
+        );
+        document.body.classList.add('scan-running');
+        elements.app.setAttribute('aria-busy', 'true');
+        elements.app.setAttribute('inert', '');
+        elements.scanProgressOverlay.hidden = false;
+        window.requestAnimationFrame(() => {
+          if (scanInProgress) {
+            elements.scanProgressOverlay.focus();
+          }
+        });
+      }
+
+      function hideScanProgress() {
+        if (scanElapsedTimer !== null) {
+          window.clearInterval(scanElapsedTimer);
+          scanElapsedTimer = null;
+        }
+
+        scanInProgress = false;
+        scanStartedAt = null;
+        elements.scanProgressOverlay.hidden = true;
+        elements.scanConfirmationView.hidden = false;
+        elements.scanProgressView.hidden = true;
+        elements.scanProgressOverlay.setAttribute(
+          'aria-labelledby',
+          'scanConfirmationTitle',
+        );
+        elements.scanProgressOverlay.setAttribute(
+          'aria-describedby',
+          'scanConfirmationDescription',
+        );
+        elements.app.removeAttribute('aria-busy');
+        elements.app.removeAttribute('inert');
+        document.body.classList.remove('scan-running');
+        elements.runButton.focus();
+      }
+
+      function updateScanElapsed() {
+        const elapsedSeconds = scanStartedAt === null
+          ? 0
+          : Math.max(0, Math.floor((Date.now() - scanStartedAt) / 1000));
+        const minutes = Math.floor(elapsedSeconds / 60);
+        const seconds = String(elapsedSeconds % 60).padStart(2, '0');
+        elements.scanElapsed.textContent = `Elapsed time: ${minutes}:${seconds}`;
+      }
+
+      function runRetentionNow() {
+        clearNotice();
+
+        if (dirty) {
+          showNotice('Save or discard your settings before running the scan.', 'error');
+          return;
+        }
+
+        openScanConfirmation();
+      }
+
+      function beginConfirmedRetentionScan() {
+        setBusy(true, 'Scanning…');
+        showScanProgress();
+        showNotice('Retention scan is running. Keep this page open.', 'warning');
+        google.script.run
+          .withSuccessHandler(response => {
+            renderRuntime(response.runtime);
+            renderTrigger(response.trigger);
+            setBusy(false);
+            hideScanProgress();
+            updateDirtyState();
+            const result = response.result;
+            const archiveFailures =
+              Number(result.archiveLookupFailureCount || 0) +
+              Number(result.archiveFailedMessageCount || 0);
+            const archiveText = result.archiveOnLabelEnabled
+              ? ` Archived ${result.archivedMessageCount || 0} Inbox ` +
+                `message(s) from ${result.archivedConversationCount || 0} ` +
+                'conversation(s).'
+              : '';
+            const archiveWarningText = archiveFailures > 0
+              ? ` ${archiveFailures} archive operation warning(s) occurred. ` +
+                'See Last Recorded Error for details.'
+              : '';
+            showNotice(
+              result.status === 'skipped'
+                ? result.reason
+                : `Scan complete. Reviewed ${result.reviewedConversationCount || 0} ` +
+                  `conversation(s) and moved ${result.movedMessageCount || 0} ` +
+                  `message(s).${archiveText}${archiveWarningText}`,
+              result.status === 'skipped' || archiveFailures > 0
+                ? 'warning'
+                : 'success',
+            );
+          })
+          .withFailureHandler(error => {
+            setBusy(false);
+            hideScanProgress();
+            updateDirtyState();
+            showNotice(`Retention scan failed: ${getErrorMessage(error)}`, 'error');
+            refreshRuntimeOnly();
+          })
+          .runRetentionFromAdmin();
+      }
+
+      function refreshRuntimeOnly(refreshSchedule) {
+        google.script.run
+          .withSuccessHandler(data => {
+            applicationData.timeZone = data.trigger.preferences.timeZone;
+            renderRuntime(data.runtime);
+            renderTrigger(data.trigger);
+            if (refreshSchedule || !scheduleDirty) {
+              renderScheduleForm(data.trigger);
+            } else {
+              currentTrigger = clone(data.trigger);
+              renderScheduleStatusWarning(data.trigger);
+              updateScheduleFields();
+              updateScheduleDirtyState();
+            }
+          })
+          .withFailureHandler(() => {})
+          .getAdminPageData();
+      }
+
+      function focusFirstInvalidField() {
+        const invalid = elements.settingsForm.querySelector('[aria-invalid="true"]');
+        if (invalid) {
+          const containingPanel = invalid.closest('details');
+          if (containingPanel) {
+            containingPanel.open = true;
+          }
+          window.requestAnimationFrame(() => {
+            invalid.focus();
+            invalid.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          });
+        }
+      }
+
+      function setBusy(isBusy, actionText) {
+        busy = isBusy;
+        elements.saveButton.textContent = isBusy && actionText === 'Saving…'
+          ? actionText
+          : 'Save changes';
+        elements.runButton.textContent = isBusy && actionText === 'Scanning…'
+          ? actionText
+          : 'Run retention scan now';
+        updateDirtyState();
+        updateScheduleDirtyState();
+      }
+
+      function showNotice(message, type) {
+        elements.globalNotice.className = `notice notice-${type}`;
+        elements.globalNotice.textContent = message;
+        elements.globalNotice.hidden = false;
+        elements.globalNotice.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+
+      function clearNotice() {
+        elements.globalNotice.hidden = true;
+        elements.globalNotice.textContent = '';
+      }
+
+      function showFatalError(error) {
+        elements.loadingScreen.hidden = true;
+        elements.app.hidden = true;
+        elements.fatalMessage.textContent = getErrorMessage(error);
+        elements.fatalScreen.hidden = false;
+      }
+
+      function getErrorMessage(error) {
+        if (!error) {
+          return 'An unknown error occurred.';
+        }
+        return error.message || String(error);
+      }
+
+      function clone(value) {
+        return JSON.parse(JSON.stringify(value));
+      }
+    </script>
+  </body>
+</html>
