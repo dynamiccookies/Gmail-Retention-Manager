@@ -1252,7 +1252,7 @@
       <header class="topbar">
         <div>
           <p class="eyebrow">Private administration</p>
-          <h1>Gmail Retention Manager</h1>
+          <h1>Retention Manager for Gmail™</h1>
           <p class="subtitle" id="ownerText"></p>
         </div>
         <div class="topbar-actions">
@@ -1339,7 +1339,7 @@
         <summary class="panel-header">
           <div>
             <h2>Schedule settings</h2>
-            <p>Control when Gmail Retention Manager scans for eligible messages.</p>
+            <p>Control when Retention Manager for Gmail™ scans for eligible messages.</p>
           </div>
         </summary>
 
@@ -1482,13 +1482,8 @@
                 <p class="field-error" id="rootLabelError"></p>
 
                 <div class="warning-box" id="rootLabelWarning" hidden>
-                  Changing this value does not rename existing Gmail labels or
-                  update Gmail filters. Labels under the previous root will no
-                  longer be managed.
-                  <label>
-                    <input id="rootLabelAcknowledgement" type="checkbox">
-                    <span>I understand the existing labels and filters are unchanged.</span>
-                  </label>
+                  Saving this change renames the existing root label and its
+                  child labels. Gmail filters continue using the same label IDs.
                 </div>
               </div>
 
@@ -1757,7 +1752,7 @@
           'lastSuccessValue', 'lastSuccessDetail', 'lastErrorValue',
           'lastErrorDetail', 'runButton', 'runHelp', 'settingsForm',
           'rootLabel', 'rootLabelError', 'rootLabelWarning',
-          'rootLabelAcknowledgement', 'starterLabels', 'starterLabelsError',
+          'starterLabels', 'starterLabelsError',
           'archiveOnLabel',
           'subjectPrefix', 'subjectPrefixError', 'notificationRetention',
           'notificationRetentionError', 'checkForUpdates', 'verboseLogging',
@@ -1959,7 +1954,7 @@
         }
 
         elements.updateAvailableTitle.textContent =
-          `Gmail Retention Manager v${availableUpdate.version} is available`;
+          `Retention Manager for Gmail™ v${availableUpdate.version} is available`;
         elements.updateAvailableDetail.textContent =
           `Installed version: v${applicationData.version}. Review the latest ` +
           'GitHub release and update manually.';
@@ -1979,7 +1974,6 @@
         elements.checkForUpdates.checked = settings.CHECK_FOR_UPDATES;
         elements.verboseLogging.checked = settings.VERBOSE_LOGGING;
         elements.systemLabel.value = settings.SYSTEM_NOTIFICATION_LABEL_SUFFIX;
-        elements.rootLabelAcknowledgement.checked = false;
         elements.systemLabelAcknowledgement.checked = false;
         elements.verboseNotice.hidden = !settings.VERBOSE_LOGGING;
         renderAvailableUpdate(
@@ -2363,8 +2357,8 @@
 
         if (rootChanged) {
           warnings.push(
-            'The root label will change, but existing Gmail labels and filters ' +
-              'will not be renamed or updated.',
+            'The existing root label and its child labels will be renamed. ' +
+              'Gmail filters will keep using the same label IDs.',
           );
         }
         if (systemChanged) {
@@ -2380,7 +2374,7 @@
         elements.backupRestoreAcknowledgementText.textContent = rootChanged ||
           systemChanged
           ? 'I understand these settings will replace the current settings and ' +
-            'existing Gmail labels or filters will not be reorganized.'
+            'may rename existing Gmail labels.'
           : 'I understand these saved settings will replace the current settings.';
       }
 
@@ -2456,8 +2450,6 @@
           return;
         }
 
-        const rootChanged = selectedBackup.settings.ROOT_LABEL !==
-          initialSettings.ROOT_LABEL;
         const systemChanged =
           selectedBackup.settings.SYSTEM_NOTIFICATION_LABEL_SUFFIX !==
             initialSettings.SYSTEM_NOTIFICATION_LABEL_SUFFIX;
@@ -2490,7 +2482,6 @@
             backupId: selectedBackup.id,
             confirmRestore: true,
             acknowledgements: {
-              rootLabelChange: rootChanged,
               systemLabelChange: systemChanged,
             },
           });
@@ -3135,9 +3126,6 @@
         elements.rootLabelWarning.hidden = !rootChanged;
         elements.systemLabelWarning.hidden = !systemChanged;
 
-        if (!rootChanged) {
-          elements.rootLabelAcknowledgement.checked = false;
-        }
         if (!systemChanged) {
           elements.systemLabelAcknowledgement.checked = false;
         }
@@ -3295,15 +3283,9 @@
         }
 
         const settings = getFormSettings();
-        const rootChanged = settings.ROOT_LABEL !== initialSettings.ROOT_LABEL;
         const systemChanged = settings.SYSTEM_NOTIFICATION_LABEL_SUFFIX !==
           initialSettings.SYSTEM_NOTIFICATION_LABEL_SUFFIX;
 
-        if (rootChanged && !elements.rootLabelAcknowledgement.checked) {
-          showNotice('Acknowledge the root-label consequences before saving.', 'error');
-          elements.rootLabelAcknowledgement.focus();
-          return;
-        }
         if (systemChanged && !elements.systemLabelAcknowledgement.checked) {
           showNotice('Acknowledge the internal-label consequence before saving.', 'error');
           elements.systemLabelAcknowledgement.focus();
@@ -3340,7 +3322,6 @@
           .saveAdminPageSettings({
             settings,
             acknowledgements: {
-              rootLabelChange: elements.rootLabelAcknowledgement.checked,
               systemLabelChange: elements.systemLabelAcknowledgement.checked,
             },
           });

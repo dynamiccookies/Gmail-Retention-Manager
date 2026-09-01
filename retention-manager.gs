@@ -1,8 +1,8 @@
 /**
- * Gmail Label-Based Retention Manager
- * ====================================
+ * Retention Manager for Gmail
+ * ===========================
  *
- * Repository: https://github.com/dynamiccookies/gmail-retention-manager
+ * Repository: https://github.com/dynamiccookies/retention-manager-for-gmail
  *
  * Version: 0.6.0
  *
@@ -126,10 +126,14 @@
  *
  * INSTALLATION
  * ------------
- * - Paste this file into a standalone Google Apps Script project.
- * - Run enforceGmailRetention() manually once and approve permissions, including
- *   external-request access used for the optional GitHub update check.
- * - Add a time-driven trigger for enforceGmailRetention(), typically once daily.
+ * - Paste retention-manager.gs, admin.html, and appsscript.json into one
+ *   standalone Google Apps Script project.
+ * - Create a non-test web-app deployment, then install the Gmail add-on from
+ *   Apps Script's Test deployments screen.
+ * - Open Gmail. The sidebar automatically queues a one-time setup trigger that
+ *   records the web-app URL and then removes itself. Use the card's Refresh
+ *   button once if Advanced Settings is still being prepared.
+ * - Configure the retention schedule from the sidebar card.
  * - Create Gmail filters that apply labels such as Retention/7d or Retention/1m.
  */
 
@@ -194,7 +198,7 @@ const RETENTION_SETTINGS_BACKUP_REASONS = Object.freeze([
   'application_update',
 ]);
 const RETENTION_RUNTIME_STATE_PROPERTY_KEY = 'GMAIL_RETENTION_RUNTIME_STATE';
-const RETENTION_RUNTIME_STATE_SCHEMA_VERSION = 1;
+const RETENTION_RUNTIME_STATE_SCHEMA_VERSION = 2;
 const RETENTION_UPDATE_CHECK_CACHE_SCHEMA_VERSION = 2;
 const RETENTION_UPDATE_NOTIFICATION_STATE_PROPERTY_KEY =
   'GMAIL_RETENTION_UPDATE_NOTIFICATION_STATE';
@@ -202,6 +206,17 @@ const RETENTION_UPDATE_NOTIFICATION_STATE_SCHEMA_VERSION = 1;
 const RETENTION_UPDATE_NOTIFICATION_HISTORY_LIMIT = 25;
 const RETENTION_ADMIN_PREFERENCES_PROPERTY_KEY =
   'GMAIL_RETENTION_ADMIN_PREFERENCES';
+const RETENTION_ADMIN_PAGE_URL_PROPERTY_KEY =
+  'GMAIL_RETENTION_ADMIN_PAGE_URL';
+const RETENTION_ADMIN_PAGE_URL_CACHE_KEY =
+  'GMAIL_RETENTION_ADMIN_PAGE_URL_CACHE';
+const RETENTION_ADMIN_PAGE_SETUP_PROPERTY_KEY =
+  'GMAIL_RETENTION_ADMIN_PAGE_SETUP';
+const RETENTION_ADMIN_PAGE_SETUP_HANDLER =
+  'registerRetentionAdminPageUrl';
+const RETENTION_ADMIN_PAGE_SETUP_STALE_MS = 10 * 60 * 1000;
+const RETENTION_SIDEBAR_RUN_PROPERTY_KEY =
+  'GMAIL_RETENTION_SIDEBAR_RUN_REQUEST';
 const RETENTION_ADMIN_PREFERENCES_SCHEMA_VERSION = 1;
 const RETENTION_ADMIN_FACTORY_PREFERENCES = Object.freeze({
   theme: 'dark',
@@ -209,6 +224,7 @@ const RETENTION_ADMIN_FACTORY_PREFERENCES = Object.freeze({
 const RETENTION_SCHEDULE_PROPERTY_KEY = 'GMAIL_RETENTION_SCHEDULE';
 const RETENTION_SCHEDULE_SCHEMA_VERSION = 1;
 const RETENTION_SCHEDULE_HANDLER = 'enforceGmailRetention';
+const RETENTION_SIDEBAR_RUN_STALE_MS = 10 * 60 * 1000;
 const RETENTION_SCHEDULE_DEFAULT_FREQUENCY = 'daily';
 const RETENTION_SCHEDULE_DEFAULT_DAILY_TIME = '07:00';
 const RETENTION_SCHEDULE_FREQUENCIES = Object.freeze({
@@ -260,10 +276,13 @@ const RETENTION_SCHEDULE_FREQUENCIES = Object.freeze({
  */
 const RETENTION_CONFIG = Object.freeze({
 
+  // User-facing application name used by the add-on, admin page, and emails.
+  APPLICATION_NAME: 'Retention Manager for Gmail™',
+
   // Displayed in notification footers and linked to the matching GitHub release.
-  VERSION: '0.6.0',
+  VERSION: '0.7.0',
   PROJECT_REPOSITORY_URL:
-    'https://github.com/dynamiccookies/gmail-retention-manager',
+    'https://github.com/dynamiccookies/retention-manager-for-gmail',
 
   // Cache GitHub release results to reduce external requests. Apps Script allows
   // a maximum cache duration of 21,600 seconds (six hours).
@@ -295,6 +314,385 @@ const RETENTION_CONFIG = Object.freeze({
 
   // Prevent overlapping manual and scheduled executions from processing twice.
   LOCK_TIMEOUT_MS: 5000,
+});
+
+/*
+ * Gmail API compatibility objects keep the retention algorithm readable while
+ * allowing the project to use gmail.modify instead of the broader
+ * https://mail.google.com/ scope required by the built-in GmailApp service.
+ */
+let gmailApiUserLabelCache = null;
+const gmailApiThreadCache = new Map();
+const gmailApiLabelThreadIdCache = new Map();
+
+function invalidateGmailApiCaches_() {
+  gmailApiUserLabelCache = null;
+  gmailApiThreadCache.clear();
+  gmailApiLabelThreadIdCache.clear();
+}
+
+function getGmailApiUserLabels_() {
+  if (gmailApiUserLabelCache) {
+    return gmailApiUserLabelCache;
+  }
+  const response = Gmail.Users.Labels.list('me') || {};
+  gmailApiUserLabelCache = (Array.isArray(response.labels) ? response.labels : [])
+    .filter(label => label && label.type !== 'system')
+    .map(createGmailApiLabel_);
+  return gmailApiUserLabelCache;
+}
+
+function createGmailApiLabel_(resource) {
+  return {
+    getId: () => resource.id,
+    getName: () => resource.name,
+    getThreads: (start, max) => listGmailApiLabelThreads_(
+      resource.id,
+      start,
+      max,
+    ),
+    addToThread: thread => {
+      Gmail.Users.Threads.modify(
+        { addLabelIds: [resource.id] },
+        'me',
+        thread.getId(),
+      );
+      gmailApiThreadCache.delete(thread.getId());
+      gmailApiLabelThreadIdCache.delete(resource.id);
+      return thread;
+    },
+    removeFromThread: thread => {
+      Gmail.Users.Threads.modify(
+        { removeLabelIds: [resource.id] },
+        'me',
+        thread.getId(),
+      );
+      gmailApiThreadCache.delete(thread.getId());
+      gmailApiLabelThreadIdCache.delete(resource.id);
+      return thread;
+    },
+    deleteLabel: () => {
+      Gmail.Users.Labels.delete('me', resource.id);
+      invalidateGmailApiCaches_();
+    },
+  };
+}
+
+function listGmailApiLabelThreads_(labelId, start, max) {
+  const targetCount = Math.max(0, start) + Math.max(0, max);
+  const state = gmailApiLabelThreadIdCache.get(labelId) || {
+    ids: [],
+    nextPageToken: null,
+    started: false,
+    complete: false,
+  };
+
+  while (!state.complete && state.ids.length < targetCount) {
+    const options = {
+      labelIds: [labelId],
+      includeSpamTrash: true,
+      maxResults: Math.min(500, Math.max(1, targetCount - state.ids.length)),
+    };
+    if (state.nextPageToken) {
+      options.pageToken = state.nextPageToken;
+    }
+    const response = Gmail.Users.Threads.list('me', options) || {};
+    if (Array.isArray(response.threads)) {
+      response.threads.forEach(resource => {
+        if (resource && resource.id && !state.ids.includes(resource.id)) {
+          state.ids.push(resource.id);
+        }
+      });
+    }
+    state.started = true;
+    state.nextPageToken = response.nextPageToken || null;
+    state.complete = !state.nextPageToken;
+  }
+  gmailApiLabelThreadIdCache.set(labelId, state);
+
+  return state.ids
+    .slice(start, start + max)
+    .map(createGmailApiThread_);
+}
+
+/** Runs one Gmail read with bounded retries for transient API failures. */
+function executeGmailApiReadWithRetry_(operation) {
+  let lastError = null;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      return operation();
+    } catch (error) {
+      lastError = error;
+      const message = getRuntimeErrorMessage(error);
+      const retryable = /precondition|rate limit|backend|internal|temporar|\b429\b|\b500\b|\b503\b/i
+        .test(message);
+      if (!retryable || attempt === 3) {
+        break;
+      }
+      Utilities.sleep(250 * attempt);
+    }
+  }
+  throw lastError;
+}
+
+/** Verifies the metadata required by the retention calculation. */
+function validateGmailApiThreadResource_(resource, threadId) {
+  const messages = resource && Array.isArray(resource.messages)
+    ? resource.messages
+    : [];
+  if (messages.length === 0) {
+    throw new Error('Gmail returned a conversation without any messages.');
+  }
+  messages.forEach(message => {
+    if (
+      !message ||
+      typeof message.id !== 'string' ||
+      !message.id ||
+      typeof message.threadId !== 'string' ||
+      message.threadId !== threadId ||
+      !Number.isFinite(Number(message.internalDate))
+    ) {
+      throw new Error(
+        'Gmail returned incomplete message metadata for the conversation.',
+      );
+    }
+  });
+  return resource;
+}
+
+/**
+ * Reads a thread without message bodies. If Gmail cannot construct thread-level
+ * metadata, falls back to a minimal thread plus individual message metadata.
+ */
+function readGmailApiThreadResource_(threadId) {
+  let metadataError = null;
+  try {
+    const metadataThread = executeGmailApiReadWithRetry_(() =>
+      Gmail.Users.Threads.get('me', threadId, {
+        format: 'metadata',
+        metadataHeaders: ['Subject', 'From'],
+      }),
+    );
+    return validateGmailApiThreadResource_(metadataThread, threadId);
+  } catch (error) {
+    metadataError = error;
+    verboseLog('THREAD METADATA READ FALLBACK', {
+      threadId,
+      error: getRuntimeErrorMessage(error),
+    });
+  }
+
+  try {
+    const minimalThread = executeGmailApiReadWithRetry_(() =>
+      Gmail.Users.Threads.get('me', threadId, { format: 'minimal' }),
+    );
+    const minimalMessages = Array.isArray(minimalThread.messages)
+      ? minimalThread.messages
+      : [];
+    const messages = minimalMessages.map(message => {
+      if (!message || !message.id) {
+        throw new Error('Gmail returned a thread message without an ID.');
+      }
+      return executeGmailApiReadWithRetry_(() =>
+        Gmail.Users.Messages.get('me', message.id, {
+          format: 'metadata',
+          metadataHeaders: ['Subject', 'From'],
+        }),
+      );
+    });
+    return validateGmailApiThreadResource_(
+      { ...minimalThread, messages },
+      threadId,
+    );
+  } catch (fallbackError) {
+    const wrappedError = new Error(
+      `Unable to read Gmail conversation ${threadId} after metadata and ` +
+        `minimal-message attempts. Metadata error: ` +
+        `${getRuntimeErrorMessage(metadataError)} Fallback error: ` +
+        `${getRuntimeErrorMessage(fallbackError)}`,
+    );
+    throw wrappedError;
+  }
+}
+
+function getGmailApiThreadResource_(threadId, refresh) {
+  if (!refresh && gmailApiThreadCache.has(threadId)) {
+    return gmailApiThreadCache.get(threadId);
+  }
+  const resource = readGmailApiThreadResource_(threadId);
+  gmailApiThreadCache.set(threadId, resource);
+  return resource;
+}
+
+function createGmailApiThread_(threadId) {
+  const discoveryLabelNames = new Set();
+  return {
+    getId: () => threadId,
+    addDiscoveryLabelName_: labelName => discoveryLabelNames.add(labelName),
+    getDiscoveryLabelNames_: () => [...discoveryLabelNames],
+    getMessages: () => {
+      const resource = getGmailApiThreadResource_(threadId, false);
+      return (Array.isArray(resource.messages) ? resource.messages : [])
+        .map(createGmailApiMessage_);
+    },
+    getLabels: () => {
+      const resource = getGmailApiThreadResource_(threadId, false);
+      const labelIds = new Set();
+      (Array.isArray(resource.messages) ? resource.messages : [])
+        .forEach(message => {
+          (Array.isArray(message.labelIds) ? message.labelIds : [])
+            .forEach(labelId => labelIds.add(labelId));
+        });
+      return getGmailApiUserLabels_().filter(label => labelIds.has(label.getId()));
+    },
+    isInTrash: () => {
+      const resource = getGmailApiThreadResource_(threadId, false);
+      return (Array.isArray(resource.messages) ? resource.messages : [])
+        .some(message =>
+          Array.isArray(message.labelIds) &&
+            message.labelIds.includes('TRASH'),
+        );
+    },
+    getPermalink: () => `https://mail.google.com/mail/u/0/#all/${threadId}`,
+    moveToInbox: () => {
+      try {
+        Gmail.Users.Threads.untrash('me', threadId);
+      } catch (error) {
+        verboseLog('THREAD UNTRASH SKIPPED', {
+          threadId,
+          error: error.message,
+        });
+      }
+      Gmail.Users.Threads.modify(
+        { addLabelIds: ['INBOX'], removeLabelIds: ['SPAM'] },
+        'me',
+        threadId,
+      );
+      gmailApiThreadCache.delete(threadId);
+      return createGmailApiThread_(threadId);
+    },
+    markUnread: () => {
+      Gmail.Users.Threads.modify(
+        { addLabelIds: ['UNREAD'] },
+        'me',
+        threadId,
+      );
+      gmailApiThreadCache.delete(threadId);
+      return createGmailApiThread_(threadId);
+    },
+  };
+}
+
+function getGmailApiHeader_(resource, headerName) {
+  const headers = resource && resource.payload &&
+      Array.isArray(resource.payload.headers)
+    ? resource.payload.headers
+    : [];
+  const header = headers.find(item =>
+    item && typeof item.name === 'string' &&
+      item.name.toLowerCase() === headerName.toLowerCase(),
+  );
+  return header && typeof header.value === 'string' ? header.value : '';
+}
+
+function createGmailApiMessage_(resource) {
+  return {
+    getId: () => resource.id,
+    getThread: () => createGmailApiThread_(resource.threadId),
+    getDate: () => new Date(Number(resource.internalDate)),
+    getSubject: () => getGmailApiHeader_(resource, 'Subject'),
+    getFrom: () => getGmailApiHeader_(resource, 'From'),
+    isInTrash: () =>
+      Array.isArray(resource.labelIds) && resource.labelIds.includes('TRASH'),
+    moveToTrash: () => {
+      Gmail.Users.Messages.trash('me', resource.id);
+      resource.labelIds = Array.isArray(resource.labelIds)
+        ? [...new Set([...resource.labelIds, 'TRASH'])]
+        : ['TRASH'];
+      gmailApiThreadCache.delete(resource.threadId);
+      return createGmailApiMessage_(resource);
+    },
+  };
+}
+
+function encodeMimeHeader_(value) {
+  return `=?UTF-8?B?${Utilities.base64Encode(
+    String(value),
+    Utilities.Charset.UTF_8,
+  )}?=`;
+}
+
+function buildGmailApiMimeMessage_(recipient, subject, plainBody, options) {
+  const boundary = `retention_${Utilities.getUuid().replace(/-/g, '')}`;
+  const senderName = options && options.name
+    ? options.name
+    : RETENTION_CONFIG.APPLICATION_NAME;
+  const htmlBody = options && typeof options.htmlBody === 'string'
+    ? options.htmlBody
+    : '';
+  const encodeBody = value => Utilities.base64Encode(
+    String(value),
+    Utilities.Charset.UTF_8,
+  );
+  return [
+    `From: ${encodeMimeHeader_(senderName)} <${recipient}>`,
+    `To: ${recipient}`,
+    `Subject: ${encodeMimeHeader_(subject)}`,
+    'MIME-Version: 1.0',
+    `Content-Type: multipart/alternative; boundary="${boundary}"`,
+    '',
+    `--${boundary}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    'Content-Transfer-Encoding: base64',
+    '',
+    encodeBody(plainBody),
+    `--${boundary}`,
+    'Content-Type: text/html; charset="UTF-8"',
+    'Content-Transfer-Encoding: base64',
+    '',
+    encodeBody(htmlBody),
+    `--${boundary}--`,
+    '',
+  ].join('\r\n');
+}
+
+const GmailApiApp = Object.freeze({
+  getUserLabels: () => getGmailApiUserLabels_().slice(),
+  getUserLabelByName: labelName => {
+    const target = normalizeRetentionLabelName(labelName).toLowerCase();
+    return getGmailApiUserLabels_().find(label =>
+      normalizeRetentionLabelName(label.getName()).toLowerCase() === target,
+    ) || null;
+  },
+  createLabel: labelName => {
+    const resource = Gmail.Users.Labels.create(
+      {
+        name: normalizeRetentionLabelName(labelName),
+        labelListVisibility: 'labelShow',
+        messageListVisibility: 'show',
+      },
+      'me',
+    );
+    invalidateGmailApiCaches_();
+    return createGmailApiLabel_(resource);
+  },
+  createDraft: (recipient, subject, plainBody, options) => ({
+    send: () => {
+      const mimeMessage = buildGmailApiMimeMessage_(
+        recipient,
+        subject,
+        plainBody,
+        options,
+      );
+      const raw = Utilities.base64EncodeWebSafe(
+        mimeMessage,
+        Utilities.Charset.UTF_8,
+      ).replace(/=+$/g, '');
+      const resource = Gmail.Users.Messages.send({ raw }, 'me');
+      gmailApiThreadCache.delete(resource.threadId);
+      return createGmailApiMessage_(resource);
+    },
+  }),
 });
 
 /* Cached only for the current Apps Script execution. */
@@ -594,6 +992,151 @@ function saveRetentionSettings(settings) {
   retentionSettingsCache = freezeRetentionSettings(validatedSettings);
 
   return copyRetentionSettings(retentionSettingsCache);
+}
+
+/**
+ * Renames the configured Gmail root label and every descendant while preserving
+ * label IDs. Gmail filters reference those IDs, so they continue applying the
+ * same labels after the visible names change.
+ *
+ * A temporary namespace prevents partial-path collisions. Any failed rename is
+ * rolled back to the original label names before the error is returned.
+ *
+ * @param {string} oldRoot Current root-label path.
+ * @param {string} newRoot Replacement root-label path.
+ * @return {{renamedLabelCount: number}} Rename result.
+ */
+function renameRetentionRootLabelTree(oldRoot, newRoot) {
+  const normalizedOldRoot = validateLabelPathSetting(oldRoot, 'old root label');
+  const normalizedNewRoot = validateLabelPathSetting(newRoot, 'new root label');
+
+  if (normalizedOldRoot === normalizedNewRoot) {
+    return { renamedLabelCount: 0 };
+  }
+  if (
+    typeof Gmail === 'undefined' ||
+    !Gmail.Users ||
+    !Gmail.Users.Labels
+  ) {
+    throw new Error(
+      'The advanced Gmail service must be enabled to rename the root label.',
+    );
+  }
+
+  const response = Gmail.Users.Labels.list('me') || {};
+  const labels = Array.isArray(response.labels) ? response.labels : [];
+  const oldRootLower = normalizedOldRoot.toLowerCase();
+  const mappings = labels
+    .filter(label => {
+      if (!label || label.type === 'system' || typeof label.name !== 'string') {
+        return false;
+      }
+      const nameLower = normalizeRetentionLabelName(label.name).toLowerCase();
+      return nameLower === oldRootLower ||
+        nameLower.startsWith(`${oldRootLower}/`);
+    })
+    .map(label => {
+      const normalizedName = normalizeRetentionLabelName(label.name);
+      const suffix = normalizedName.length === normalizedOldRoot.length
+        ? ''
+        : normalizedName.slice(normalizedOldRoot.length);
+      const targetName = `${normalizedNewRoot}${suffix}`;
+      if (targetName.length > 225) {
+        throw new Error(
+          `Renaming ${label.name} would exceed Gmail's label-name limit.`,
+        );
+      }
+      return {
+        id: label.id,
+        originalName: label.name,
+        targetName,
+        currentName: label.name,
+      };
+    });
+
+  if (mappings.length === 0) {
+    return { renamedLabelCount: 0 };
+  }
+
+  const sourceIds = new Set(mappings.map(mapping => mapping.id));
+  const occupiedNames = new Map();
+  labels.forEach(label => {
+    if (
+      label &&
+      typeof label.name === 'string' &&
+      !sourceIds.has(label.id)
+    ) {
+      occupiedNames.set(
+        normalizeRetentionLabelName(label.name).toLowerCase(),
+        label.name,
+      );
+    }
+  });
+  mappings.forEach(mapping => {
+    const conflict = occupiedNames.get(mapping.targetName.toLowerCase());
+    if (conflict) {
+      throw new Error(
+        `Cannot rename the root label because ${conflict} already exists.`,
+      );
+    }
+  });
+
+  const temporaryRoot = `_RetentionManagerRename_${Utilities.getUuid()}`;
+  mappings.forEach(mapping => {
+    const suffix = normalizeRetentionLabelName(mapping.originalName).length ===
+        normalizedOldRoot.length
+      ? ''
+      : normalizeRetentionLabelName(mapping.originalName)
+        .slice(normalizedOldRoot.length);
+    mapping.temporaryName = `${temporaryRoot}${suffix}`;
+  });
+
+  const patchLabelName = (mapping, name) => {
+    Gmail.Users.Labels.patch({ name }, 'me', mapping.id);
+    mapping.currentName = name;
+  };
+  const rollback = () => {
+    mappings
+      .filter(mapping => mapping.currentName !== mapping.originalName)
+      .sort((first, second) =>
+        second.originalName.split('/').length -
+          first.originalName.split('/').length,
+      )
+      .forEach(mapping => {
+        try {
+          patchLabelName(mapping, mapping.originalName);
+        } catch (rollbackError) {
+          console.error(
+            `Unable to restore Gmail label ${mapping.currentName} to ` +
+              `${mapping.originalName}: ${rollbackError.message}`,
+          );
+        }
+      });
+  };
+
+  try {
+    mappings
+      .slice()
+      .sort((first, second) =>
+        second.originalName.split('/').length -
+          first.originalName.split('/').length,
+      )
+      .forEach(mapping => patchLabelName(mapping, mapping.temporaryName));
+    mappings
+      .slice()
+      .sort((first, second) =>
+        first.targetName.split('/').length -
+          second.targetName.split('/').length,
+      )
+      .forEach(mapping => patchLabelName(mapping, mapping.targetName));
+  } catch (error) {
+    rollback();
+    invalidateGmailApiCaches_();
+    throw new Error(`Unable to rename the root Gmail label: ${error.message}`);
+  }
+
+  invalidateGmailApiCaches_();
+  return { renamedLabelCount: mappings.length };
 }
 
 /**
@@ -982,7 +1525,7 @@ function importRetentionSettingsBackupFromAdmin(request) {
     typeof request.content !== 'string' ||
     !request.content.trim()
   ) {
-    throw new Error('Select a valid Gmail Retention Manager backup file.');
+    throw new Error(`Select a valid ${RETENTION_CONFIG.APPLICATION_NAME} backup file.`);
   }
   if (request.content.length > RETENTION_SETTINGS_BACKUP_IMPORT_MAX_CHARACTERS) {
     throw new Error('The selected backup file is unexpectedly large.');
@@ -1002,7 +1545,8 @@ function importRetentionSettingsBackupFromAdmin(request) {
       RETENTION_SETTINGS_BACKUP_EXPORT_SCHEMA_VERSION
   ) {
     throw new Error(
-      'The selected file is not a supported Gmail Retention Manager backup.',
+      `The selected file is not a supported ` +
+        `${RETENTION_CONFIG.APPLICATION_NAME} backup.`,
     );
   }
 
@@ -1405,11 +1949,19 @@ function createManagedRetentionTrigger(preferences) {
 function createDefaultRetentionRuntimeState() {
   return {
     schemaVersion: RETENTION_RUNTIME_STATE_SCHEMA_VERSION,
+    lastRunSource: null,
     lastRunStatus: 'never',
+    lastRunQueuedAt: null,
     lastRunStartedAt: null,
     lastRunCompletedAt: null,
     lastSuccessfulRunAt: null,
     lastSuccessfulResult: null,
+    lastScheduledRunStartedAt: null,
+    lastScheduledRunCompletedAt: null,
+    lastScheduledResult: null,
+    lastManualRunStartedAt: null,
+    lastManualRunCompletedAt: null,
+    lastManualResult: null,
     lastErrorAt: null,
     lastErrorMessage: null,
     lastResult: null,
@@ -1436,7 +1988,9 @@ function getRetentionRuntimeState() {
 
     if (
       !isConfigurationObject(parsed) ||
-      parsed.schemaVersion !== RETENTION_RUNTIME_STATE_SCHEMA_VERSION
+      ![1, RETENTION_RUNTIME_STATE_SCHEMA_VERSION].includes(
+        parsed.schemaVersion,
+      )
     ) {
       throw new Error('unsupported or missing runtime-state schema');
     }
@@ -1453,6 +2007,18 @@ function getRetentionRuntimeState() {
     );
     return createDefaultRetentionRuntimeState();
   }
+}
+
+/**
+ * Distinguishes installable-trigger executions from user-initiated scans.
+ *
+ * @param {Object=} event Apps Script trigger event when scheduled.
+ * @return {string} scheduled or manual.
+ */
+function getRetentionRunSource(event) {
+  return event && typeof event.triggerUid === 'string' && event.triggerUid
+    ? 'scheduled'
+    : 'manual';
 }
 
 /**
@@ -1516,9 +2082,10 @@ function assertAdminOwnerAccess() {
  */
 function doGet() {
   assertAdminOwnerAccess();
+  rememberCurrentAdminPageUrl_();
 
   return HtmlService.createHtmlOutputFromFile('admin')
-    .setTitle('Gmail Retention Manager')
+    .setTitle(RETENTION_CONFIG.APPLICATION_NAME)
     .addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
@@ -1670,7 +2237,7 @@ function getAdminPageData() {
 
   return {
     application: {
-      name: 'Gmail Retention Manager',
+      name: RETENTION_CONFIG.APPLICATION_NAME,
       version: RETENTION_CONFIG.VERSION,
       repositoryUrl: RETENTION_CONFIG.PROJECT_REPOSITORY_URL,
       releasesUrl: `${RETENTION_CONFIG.PROJECT_REPOSITORY_URL}/releases`,
@@ -1690,6 +2257,923 @@ function getAdminPageData() {
 }
 
 /**
+ * Gmail add-on homepage trigger.
+ *
+ * @return {Card} Retention Manager sidebar card.
+ */
+function buildGmailHomepage() {
+  assertAdminOwnerAccess();
+  return buildRetentionSidebarCard_();
+}
+
+/**
+ * Reads one string value from a Google Workspace add-on form event.
+ *
+ * @param {Object} event Add-on action event.
+ * @param {string} fieldName Form field name.
+ * @param {string} fallback Value used when the field is absent.
+ * @return {string} Submitted or fallback value.
+ */
+function getSidebarFormString_(event, fieldName, fallback) {
+  const formInputs = event && event.commonEventObject &&
+      event.commonEventObject.formInputs
+    ? event.commonEventObject.formInputs
+    : null;
+  const input = formInputs ? formInputs[fieldName] : null;
+  const values = input && input.stringInputs &&
+      Array.isArray(input.stringInputs.value)
+    ? input.stringInputs.value
+    : [];
+
+  return values.length > 0 ? String(values[0]) : fallback;
+}
+
+/** Returns one action parameter across current and legacy add-on event shapes. */
+function getSidebarActionParameter_(event, parameterName, fallback) {
+  const commonParameters = event && event.commonEventObject &&
+      isConfigurationObject(event.commonEventObject.parameters)
+    ? event.commonEventObject.parameters
+    : {};
+  const legacyParameters = event && isConfigurationObject(event.parameters)
+    ? event.parameters
+    : {};
+  if (Object.prototype.hasOwnProperty.call(commonParameters, parameterName)) {
+    return String(commonParameters[parameterName]);
+  }
+  if (Object.prototype.hasOwnProperty.call(legacyParameters, parameterName)) {
+    return String(legacyParameters[parameterName]);
+  }
+  return fallback;
+}
+
+/** @return {string} Title-case runtime status. */
+function getSidebarStatusLabel_(status) {
+  const normalized = typeof status === 'string' && status
+    ? status
+    : 'unknown';
+  return normalized.charAt(0).toUpperCase() + normalized.slice(1);
+}
+
+/** @return {string} Bold, color-coded status text for the Gmail card. */
+function formatSidebarStatus_(label, status) {
+  const colors = {
+    success: '#137333',
+    enabled: '#137333',
+    active: '#137333',
+    error: '#c5221f',
+    warning: '#b06000',
+    running: '#1a73e8',
+    queued: '#1a73e8',
+    skipped: '#b06000',
+    disabled: '#5f6368',
+    never: '#5f6368',
+    unknown: '#5f6368',
+  };
+  const color = colors[status] || colors.unknown;
+  return `<font color="${color}"><b>${escapeHtml(label)}</b></font>`;
+}
+
+/** @return {CardSection} Card section with a clearly emphasized heading. */
+function createSidebarSection_(heading) {
+  const section = CardService.newCardSection();
+  if (heading) {
+    section.addWidget(
+      CardService.newTextParagraph().setText(
+        `<b>${escapeHtml(heading)}</b>`,
+      ),
+    );
+  }
+  return section;
+}
+
+/** @return {boolean} Whether a queued/running status is still operationally live. */
+function isRetentionRunPending_(runtime) {
+  if (!runtime || !['queued', 'running'].includes(runtime.lastRunStatus)) {
+    return false;
+  }
+  const timestamp = runtime.lastRunStatus === 'queued'
+    ? runtime.lastRunQueuedAt
+    : runtime.lastRunStartedAt;
+  const started = timestamp ? new Date(timestamp) : null;
+  return Boolean(
+    started &&
+    !Number.isNaN(started.getTime()) &&
+    Date.now() - started.getTime() < RETENTION_SIDEBAR_RUN_STALE_MS,
+  );
+}
+
+/**
+ * Formats one timestamp in the configured schedule time zone.
+ *
+ * @param {string} timestamp ISO timestamp.
+ * @param {string} timeZone IANA time zone.
+ * @return {string} User-facing timestamp.
+ */
+function formatSidebarTimestamp_(timestamp, timeZone) {
+  if (!timestamp) {
+    return 'Never';
+  }
+  const date = new Date(timestamp);
+  if (Number.isNaN(date.getTime())) {
+    return 'Unknown';
+  }
+  return Utilities.formatDate(date, timeZone, 'MMM d, yyyy · h:mm a z');
+}
+
+/**
+ * Summarizes the most recent retention result without reproducing its email.
+ *
+ * @param {Object|null} result Runtime result.
+ * @return {string} Compact result summary.
+ */
+function getSidebarResultSummary_(result) {
+  if (!result || !isConfigurationObject(result)) {
+    return 'No completed run';
+  }
+  if (result.status === 'skipped') {
+    return result.reason || 'Skipped';
+  }
+
+  const reviewed = Number.isFinite(result.reviewedConversationCount)
+    ? result.reviewedConversationCount
+    : 0;
+  const moved = Number.isFinite(result.movedMessageCount)
+    ? result.movedMessageCount
+    : 0;
+  return `${reviewed} conversation${reviewed === 1 ? '' : 's'} reviewed · ` +
+    `${moved} message${moved === 1 ? '' : 's'} moved`;
+}
+
+/**
+ * Converts a time-zone offset such as -0500 into milliseconds.
+ *
+ * @param {Date} date Instant used to resolve daylight-saving offset.
+ * @param {string} timeZone IANA time zone.
+ * @return {number} Signed offset from UTC in milliseconds.
+ */
+function getTimeZoneOffsetMilliseconds_(date, timeZone) {
+  const offset = Utilities.formatDate(date, timeZone, 'Z');
+  const match = offset.match(/^([+-])(\d{2})(\d{2})$/);
+  if (!match) {
+    throw new Error(`Unable to resolve the ${timeZone} time-zone offset.`);
+  }
+  const milliseconds =
+    (Number(match[2]) * 60 + Number(match[3])) * 60 * 1000;
+  return match[1] === '-' ? -milliseconds : milliseconds;
+}
+
+/**
+ * Resolves a local wall-clock time in an IANA time zone to an instant.
+ *
+ * @return {Date} Resolved instant.
+ */
+function createZonedDate_(year, month, day, hour, minute, timeZone) {
+  const wallClockUtc = Date.UTC(year, month - 1, day, hour, minute, 0, 0);
+  let candidate = new Date(wallClockUtc);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    candidate = new Date(
+      wallClockUtc - getTimeZoneOffsetMilliseconds_(candidate, timeZone),
+    );
+  }
+  return candidate;
+}
+
+/** @return {string} Compact time range with one time-zone suffix. */
+function formatSidebarTimeRange_(start, end, timeZone) {
+  const startPeriod = Utilities.formatDate(start, timeZone, 'a');
+  const endPeriod = Utilities.formatDate(end, timeZone, 'a');
+  const startText = Utilities.formatDate(
+    start,
+    timeZone,
+    startPeriod === endPeriod ? 'h:mm' : 'h:mm a',
+  );
+  return `${startText}–${Utilities.formatDate(end, timeZone, 'h:mm a')} ` +
+    Utilities.formatDate(end, timeZone, 'z');
+}
+
+/**
+ * Calculates the card's next-run line from saved schedule and runtime state.
+ * Daily schedules use Apps Script's documented nearMinute +/-15-minute range.
+ * Interval schedules show the current interval window anchored to the most
+ * recent scheduled run, or to the schedule save time before the first run.
+ *
+ * @param {Object} trigger Verified trigger status.
+ * @param {Object} runtime Retention runtime state.
+ * @return {string} Next-run display.
+ */
+function getSidebarNextRunText_(trigger, runtime) {
+  if (!trigger.enabled || trigger.status === 'disabled') {
+    return 'Not scheduled';
+  }
+  if (!trigger.managed) {
+    return 'Existing trigger timing is unavailable';
+  }
+
+  const preferences = trigger.preferences;
+  const definition = RETENTION_SCHEDULE_FREQUENCIES[preferences.frequency];
+  const timeZone = preferences.timeZone;
+  const now = new Date();
+
+  if (definition.unit === 'days') {
+    const localDate = Utilities.formatDate(now, timeZone, 'yyyy-MM-dd')
+      .split('-')
+      .map(Number);
+    const dailyTime = preferences.dailyTime.split(':').map(Number);
+    let nominal = createZonedDate_(
+      localDate[0],
+      localDate[1],
+      localDate[2],
+      dailyTime[0],
+      dailyTime[1],
+      timeZone,
+    );
+    let rangeStart = new Date(nominal.getTime() - 15 * 60 * 1000);
+    let rangeEnd = new Date(nominal.getTime() + 15 * 60 * 1000);
+    if (rangeEnd.getTime() <= now.getTime()) {
+      const tomorrowUtc = new Date(Date.UTC(
+        localDate[0],
+        localDate[1] - 1,
+        localDate[2] + 1,
+      ));
+      nominal = createZonedDate_(
+        tomorrowUtc.getUTCFullYear(),
+        tomorrowUtc.getUTCMonth() + 1,
+        tomorrowUtc.getUTCDate(),
+        dailyTime[0],
+        dailyTime[1],
+        timeZone,
+      );
+      rangeStart = new Date(nominal.getTime() - 15 * 60 * 1000);
+      rangeEnd = new Date(nominal.getTime() + 15 * 60 * 1000);
+    }
+    return `${Utilities.formatDate(nominal, timeZone, 'MMM d, yyyy')} · ` +
+      `${formatSidebarTimeRange_(rangeStart, rangeEnd, timeZone)}<br>` +
+      `Daily at ${Utilities.formatDate(nominal, timeZone, 'h:mm a')}`;
+  }
+
+  const intervalMilliseconds = definition.interval *
+    (definition.unit === 'minutes' ? 60 * 1000 : 60 * 60 * 1000);
+  const anchorValue = runtime.lastScheduledRunStartedAt || trigger.updatedAt;
+  let rangeStart = anchorValue ? new Date(anchorValue) : now;
+  if (Number.isNaN(rangeStart.getTime())) {
+    rangeStart = now;
+  }
+  if (rangeStart.getTime() > now.getTime()) {
+    rangeStart = now;
+  }
+  const elapsed = now.getTime() - rangeStart.getTime();
+  const completedIntervals = Math.floor(elapsed / intervalMilliseconds);
+  rangeStart = new Date(
+    rangeStart.getTime() + completedIntervals * intervalMilliseconds,
+  );
+  const rangeEnd = new Date(rangeStart.getTime() + intervalMilliseconds);
+  return `${formatSidebarTimeRange_(rangeStart, rangeEnd, timeZone)} · ` +
+    definition.label;
+}
+
+/**
+ * Builds the operational Gmail sidebar.
+ *
+ * @param {Object=} overrides Unsaved form values used during card refresh.
+ * @return {Card} Sidebar card.
+ */
+function buildRetentionSidebarCard_(overrides = {}) {
+  const settings = getRetentionSettings();
+  const trigger = getRetentionTriggerStatus();
+  const runtime = getRetentionRuntimeState();
+  const runPending = isRetentionRunPending_(runtime);
+  const preferences = overrides.preferences || trigger.preferences;
+  const rootLabel = Object.prototype.hasOwnProperty.call(overrides, 'rootLabel')
+    ? overrides.rootLabel
+    : settings.ROOT_LABEL;
+  const card = CardService.newCardBuilder()
+    .setHeader(
+      CardService.newCardHeader().setTitle(RETENTION_CONFIG.APPLICATION_NAME),
+    );
+
+  const statusSection = createSidebarSection_('Status');
+  const scheduleStatus = trigger.status === 'enabled'
+    ? 'Active'
+    : trigger.status === 'warning'
+      ? 'Attention needed'
+      : 'Disabled';
+  const scheduleStatusType = trigger.status === 'enabled'
+    ? 'success'
+    : trigger.status === 'warning'
+      ? 'warning'
+      : 'disabled';
+  statusSection.addWidget(
+    CardService.newDecoratedText()
+      .setTopLabel('Schedule')
+      .setText(formatSidebarStatus_(scheduleStatus, scheduleStatusType)),
+  );
+  statusSection.addWidget(
+    CardService.newDecoratedText()
+      .setTopLabel(runtime.lastRunStatus === 'queued' && runPending
+        ? 'Requested'
+        : 'Last Run')
+      .setText(formatSidebarTimestamp_(
+        runtime.lastRunStatus === 'queued' && runPending
+          ? runtime.lastRunQueuedAt
+          : runtime.lastRunCompletedAt || runtime.lastRunStartedAt,
+        preferences.timeZone,
+      )),
+  );
+  statusSection.addWidget(
+    CardService.newDecoratedText()
+      .setTopLabel('Result')
+      .setText(runtime.lastRunStatus === 'never'
+        ? formatSidebarStatus_('Never run', 'never')
+        : formatSidebarStatus_(
+          getSidebarStatusLabel_(runtime.lastRunStatus),
+          runtime.lastRunStatus,
+        )),
+  );
+  if (runPending) {
+    statusSection.addWidget(
+      CardService.newTextParagraph().setText(
+        runtime.lastRunStatus === 'queued'
+          ? 'Waiting for the background retention scan to start.'
+          : 'The background retention scan is in progress.',
+      ),
+    );
+  } else if (runtime.lastRunStatus !== 'never') {
+    statusSection.addWidget(
+      CardService.newTextParagraph().setText(
+        getSidebarResultSummary_(runtime.lastResult),
+      ),
+    );
+  }
+  if (
+    ['error', 'warning'].includes(runtime.lastRunStatus) &&
+    runtime.lastErrorMessage
+  ) {
+    const errorColor = runtime.lastRunStatus === 'error'
+      ? '#c5221f'
+      : '#b06000';
+    statusSection.addWidget(
+      CardService.newTextParagraph().setText(
+        `<font color="${errorColor}">` +
+          `${escapeHtml(runtime.lastErrorMessage)}</font>`,
+      ),
+    );
+  }
+  card.addSection(statusSection);
+
+  const nextRunSection = createSidebarSection_('Next Run');
+  nextRunSection.addWidget(
+    CardService.newTextParagraph().setText(
+      getSidebarNextRunText_(trigger, runtime),
+    ),
+  );
+  card.addSection(nextRunSection);
+
+  const frequencyChangeAction = CardService.newAction()
+    .setFunctionName('refreshRetentionSidebarSchedule');
+  const scheduleSection = createSidebarSection_('Schedule');
+  scheduleSection.addWidget(
+    CardService.newSelectionInput()
+      .setFieldName('scheduleEnabled')
+      .setType(CardService.SelectionInputType.SWITCH)
+      .addItem('Enabled', 'true', preferences.enabled),
+  );
+  const frequencyInput = CardService.newSelectionInput()
+    .setTitle('Frequency')
+    .setFieldName('scheduleFrequency')
+    .setType(CardService.SelectionInputType.DROPDOWN)
+    .setOnChangeAction(frequencyChangeAction);
+  Object.entries(RETENTION_SCHEDULE_FREQUENCIES).forEach(([value, definition]) => {
+    frequencyInput.addItem(
+      definition.label,
+      value,
+      preferences.frequency === value,
+    );
+  });
+  scheduleSection.addWidget(frequencyInput);
+  if (preferences.frequency === 'daily') {
+    scheduleSection.addWidget(
+      CardService.newTextInput()
+        .setFieldName('scheduleDailyTime')
+        .setTitle('Daily Time (24-hour HH:MM)')
+        .setValue(preferences.dailyTime),
+    );
+  }
+  scheduleSection.addWidget(
+    CardService.newDecoratedText()
+      .setTopLabel('Time Zone')
+      .setText(preferences.timeZone),
+  );
+  card.addSection(scheduleSection);
+
+  const rootLabelSection = CardService.newCardSection();
+  rootLabelSection.addWidget(
+    CardService.newTextInput()
+      .setFieldName('rootRetentionLabel')
+      .setTitle('Root Retention Label')
+      .setValue(rootLabel),
+  );
+  rootLabelSection.addWidget(
+    CardService.newTextButton()
+      .setText('Save Settings')
+      .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
+      .setOnClickAction(
+        CardService.newAction()
+          .setFunctionName('saveRetentionSidebarSettings'),
+      ),
+  );
+  card.addSection(rootLabelSection);
+
+  const actionsSection = createSidebarSection_('Actions');
+  const runAction = CardService.newAction()
+    .setFunctionName('runRetentionFromSidebar')
+    .setLoadIndicator(CardService.LoadIndicator.SPINNER);
+  actionsSection.addWidget(
+    CardService.newTextButton()
+      .setText(runtime.lastRunStatus === 'queued' && runPending
+        ? 'Run Queued'
+        : runtime.lastRunStatus === 'running' && runPending
+          ? 'Running…'
+          : 'Run Now')
+      .setDisabled(runPending)
+      .setOnClickAction(runAction),
+  );
+  if (runPending) {
+    actionsSection.addWidget(
+      CardService.newTextButton()
+        .setText('Refresh Status')
+        .setOnClickAction(
+          CardService.newAction()
+            .setFunctionName('refreshRetentionSidebarStatus')
+            .setLoadIndicator(CardService.LoadIndicator.SPINNER),
+        ),
+    );
+  }
+  const adminPageUrl = getAdminPageUrl();
+  if (adminPageUrl) {
+    actionsSection.addWidget(
+      CardService.newTextButton()
+        .setText('Advanced Settings')
+        .setOpenLink(
+          CardService.newOpenLink()
+            .setUrl(adminPageUrl)
+            .setOpenAs(CardService.OpenAs.FULL_SIZE)
+            .setOnClose(CardService.OnClose.NOTHING),
+        ),
+    );
+  } else {
+    const adminPageSetup = ensureAdminPageSetupQueued_();
+    actionsSection.addWidget(
+      CardService.newTextButton()
+        .setText(adminPageSetup.status === 'error'
+          ? 'Advanced Settings Unavailable'
+          : 'Advanced Settings — Setting Up…')
+        .setDisabled(true),
+    );
+    if (adminPageSetup.status === 'error') {
+      actionsSection.addWidget(
+        CardService.newTextParagraph().setText(
+          `<font color="#c5221f">${escapeHtml(adminPageSetup.message)}</font>`,
+        ),
+      );
+      actionsSection.addWidget(
+        CardService.newTextButton()
+          .setText('Retry Setup')
+          .setOnClickAction(
+            CardService.newAction()
+              .setFunctionName('retryRetentionAdminPageSetup')
+              .setLoadIndicator(CardService.LoadIndicator.SPINNER),
+          ),
+      );
+    } else {
+      actionsSection.addWidget(
+        CardService.newTextParagraph().setText(
+          '<font color="#1a73e8">Finishing one-time setup in the ' +
+            'background.</font>',
+        ),
+      );
+      actionsSection.addWidget(
+        CardService.newTextButton()
+          .setText('Refresh')
+          .setOnClickAction(
+            CardService.newAction()
+              .setFunctionName('refreshRetentionSidebarStatus')
+              .setLoadIndicator(CardService.LoadIndicator.SPINNER),
+          ),
+      );
+    }
+  }
+  card.addSection(actionsSection);
+
+  card.addSection(
+    CardService.newCardSection().addWidget(
+      CardService.newTextParagraph().setText(
+        `<a href="${getProjectReleaseUrl()}">` +
+          `Version ${RETENTION_CONFIG.VERSION}</a>`,
+      ),
+    ),
+  );
+  return card.build();
+}
+
+/**
+ * Rerenders schedule-dependent fields without saving the form.
+ *
+ * @param {Object} event Add-on form event.
+ * @return {ActionResponse} Updated sidebar.
+ */
+function refreshRetentionSidebarSchedule(event) {
+  const trigger = getRetentionTriggerStatus();
+  const frequency = getSidebarFormString_(
+    event,
+    'scheduleFrequency',
+    trigger.preferences.frequency,
+  );
+  const preferences = {
+    ...trigger.preferences,
+    enabled: getSidebarFormString_(event, 'scheduleEnabled', '') === 'true',
+    frequency,
+    dailyTime: getSidebarFormString_(
+      event,
+      'scheduleDailyTime',
+      trigger.preferences.dailyTime,
+    ),
+  };
+  const rootLabel = getSidebarFormString_(
+    event,
+    'rootRetentionLabel',
+    getRetentionSettings().ROOT_LABEL,
+  );
+  return CardService.newActionResponseBuilder()
+    .setNavigation(
+      CardService.newNavigation().updateCard(
+        buildRetentionSidebarCard_({ preferences, rootLabel }),
+      ),
+    )
+    .build();
+}
+
+/**
+ * Converts the current sidebar fields into validated settings and schedule data.
+ *
+ * @param {Object} event Add-on form event.
+ * @return {Object} Validated sidebar request.
+ */
+function getRetentionSidebarRequest_(event) {
+  const settings = copyRetentionSettings(getRetentionSettings());
+  const trigger = getRetentionTriggerStatus();
+  settings.ROOT_LABEL = getSidebarFormString_(
+    event,
+    'rootRetentionLabel',
+    settings.ROOT_LABEL,
+  );
+  const preferences = {
+    ...trigger.preferences,
+    enabled: getSidebarFormString_(event, 'scheduleEnabled', '') === 'true',
+    frequency: getSidebarFormString_(
+      event,
+      'scheduleFrequency',
+      trigger.preferences.frequency,
+    ),
+    dailyTime: getSidebarFormString_(
+      event,
+      'scheduleDailyTime',
+      trigger.preferences.dailyTime,
+    ),
+  };
+  return {
+    settings: validateRetentionSettings(settings),
+    preferences: validateRetentionSchedulePreferences(preferences),
+  };
+}
+
+/** @return {ActionResponse} Sidebar card plus optional notification. */
+function buildSidebarActionResponse_(message) {
+  const builder = CardService.newActionResponseBuilder().setNavigation(
+    CardService.newNavigation().updateCard(buildRetentionSidebarCard_()),
+  );
+  if (message) {
+    builder.setNotification(CardService.newNotification().setText(message));
+  }
+  return builder.build();
+}
+
+/**
+ * Saves the card's root label and managed schedule.
+ *
+ * @param {Object} event Add-on form event.
+ * @return {ActionResponse} Refreshed sidebar.
+ */
+function saveRetentionSidebarSettings(event) {
+  assertAdminOwnerAccess();
+  try {
+    const request = getRetentionSidebarRequest_(event);
+    const trigger = getRetentionTriggerStatus();
+    const confirmed = getSidebarActionParameter_(
+      event,
+      'confirmExistingTriggers',
+      'false',
+    ) === 'true';
+
+    if (trigger.requiresExistingTriggerConfirmation && !confirmed) {
+      const payload = JSON.stringify(request);
+      const confirmationCard = CardService.newCardBuilder()
+        .setHeader(CardService.newCardHeader().setTitle('Replace Schedule?'))
+        .addSection(
+          CardService.newCardSection()
+            .addWidget(CardService.newTextParagraph().setText(
+              'Existing retention triggers must be replaced to manage this ' +
+                'schedule from the sidebar.',
+            ))
+            .addWidget(
+              CardService.newButtonSet()
+                .addButton(
+                  CardService.newTextButton()
+                    .setText('Replace Triggers')
+                    .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
+                    .setOnClickAction(
+                      CardService.newAction()
+                        .setFunctionName('confirmRetentionSidebarSettings')
+                        .setParameters({ payload }),
+                    ),
+                )
+                .addButton(
+                  CardService.newTextButton()
+                    .setText('Cancel')
+                    .setOnClickAction(
+                      CardService.newAction()
+                        .setFunctionName('cancelRetentionSidebarConfirmation'),
+                    ),
+                ),
+            ),
+        )
+        .build();
+      return CardService.newActionResponseBuilder()
+        .setNavigation(CardService.newNavigation().pushCard(confirmationCard))
+        .build();
+    }
+
+    saveAdminPageSettings({ settings: request.settings, acknowledgements: {} });
+    saveRetentionScheduleFromAdmin({
+      preferences: request.preferences,
+      confirmExistingTriggers: confirmed,
+    });
+    return buildSidebarActionResponse_('Settings saved.');
+  } catch (error) {
+    return CardService.newActionResponseBuilder()
+      .setNotification(
+        CardService.newNotification().setText(getRuntimeErrorMessage(error)),
+      )
+      .build();
+  }
+}
+
+/** Applies a confirmed sidebar save carried by the confirmation card. */
+function confirmRetentionSidebarSettings(event) {
+  assertAdminOwnerAccess();
+  try {
+    const payload = getSidebarActionParameter_(event, 'payload', '');
+    const request = JSON.parse(payload);
+    request.settings = validateRetentionSettings(request.settings);
+    request.preferences = validateRetentionSchedulePreferences(
+      request.preferences,
+    );
+    saveAdminPageSettings({ settings: request.settings, acknowledgements: {} });
+    saveRetentionScheduleFromAdmin({
+      preferences: request.preferences,
+      confirmExistingTriggers: true,
+    });
+    return CardService.newActionResponseBuilder()
+      .setNavigation(
+        CardService.newNavigation()
+          .popCard()
+          .updateCard(buildRetentionSidebarCard_()),
+      )
+      .setNotification(CardService.newNotification().setText('Settings saved.'))
+      .build();
+  } catch (error) {
+    return CardService.newActionResponseBuilder()
+      .setNotification(
+        CardService.newNotification().setText(getRuntimeErrorMessage(error)),
+      )
+      .build();
+  }
+}
+
+/** Cancels the trigger-replacement confirmation card. */
+function cancelRetentionSidebarConfirmation() {
+  return CardService.newActionResponseBuilder()
+    .setNavigation(CardService.newNavigation().popCard())
+    .build();
+}
+
+/** @return {?Object} Valid queued sidebar-run metadata. */
+function getQueuedRetentionRunRequest_() {
+  const stored = PropertiesService.getScriptProperties().getProperty(
+    RETENTION_SIDEBAR_RUN_PROPERTY_KEY,
+  );
+  if (!stored) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(stored);
+    if (
+      !isConfigurationObject(parsed) ||
+      typeof parsed.triggerId !== 'string' ||
+      !parsed.triggerId ||
+      typeof parsed.queuedAt !== 'string' ||
+      Number.isNaN(new Date(parsed.queuedAt).getTime())
+    ) {
+      throw new Error('invalid queued-run metadata');
+    }
+    return {
+      triggerId: parsed.triggerId,
+      queuedAt: parsed.queuedAt,
+      preferences: validateRetentionSchedulePreferences(parsed.preferences),
+    };
+  } catch (error) {
+    console.error(`Ignoring queued sidebar run: ${getRuntimeErrorMessage(error)}`);
+    return null;
+  }
+}
+
+/** Stores the temporary trigger and the schedule it must restore. */
+function saveQueuedRetentionRunRequest_(triggerId, preferences, queuedAt) {
+  PropertiesService.getScriptProperties().setProperty(
+    RETENTION_SIDEBAR_RUN_PROPERTY_KEY,
+    JSON.stringify({
+      triggerId,
+      queuedAt,
+      preferences: validateRetentionSchedulePreferences(preferences),
+    }),
+  );
+}
+
+/** Clears completed or cancelled queued-run metadata. */
+function clearQueuedRetentionRunRequest_() {
+  PropertiesService.getScriptProperties().deleteProperty(
+    RETENTION_SIDEBAR_RUN_PROPERTY_KEY,
+  );
+}
+
+/** Deletes one user-owned project trigger by unique ID when it still exists. */
+function deleteProjectTriggerById_(triggerId) {
+  const trigger = ScriptApp.getProjectTriggers().find(
+    item => item.getUniqueId() === triggerId,
+  );
+  if (trigger) {
+    ScriptApp.deleteTrigger(trigger);
+  }
+}
+
+/**
+ * Replaces the temporary Run Now trigger with the user's normal schedule.
+ * The temporary trigger is removed first, keeping trigger usage flat even when
+ * the Apps Script project is already at Google's per-user trigger limit.
+ */
+function restoreManagedScheduleAfterSidebarRun_(request) {
+  deleteProjectTriggerById_(request.triggerId);
+  const restoredTrigger = createManagedRetentionTrigger(request.preferences);
+  saveRetentionScheduleConfiguration(
+    request.preferences,
+    restoredTrigger.getUniqueId(),
+  );
+  clearQueuedRetentionRunRequest_();
+  return restoredTrigger;
+}
+
+/**
+ * Claims a one-time Run Now execution and restores the recurring schedule
+ * before Gmail processing begins.
+ */
+function prepareQueuedRetentionRun_(event) {
+  const request = getQueuedRetentionRunRequest_();
+  const eventTriggerId = event && typeof event.triggerUid === 'string'
+    ? event.triggerUid
+    : '';
+  if (!request || request.triggerId !== eventTriggerId) {
+    return false;
+  }
+
+  try {
+    restoreManagedScheduleAfterSidebarRun_(request);
+    return true;
+  } catch (error) {
+    clearQueuedRetentionRunRequest_();
+    saveRetentionScheduleConfiguration(request.preferences, null);
+    const failedAt = new Date().toISOString();
+    updateRetentionRuntimeStateSafely({
+      lastRunSource: 'manual',
+      lastRunStatus: 'error',
+      lastRunQueuedAt: null,
+      lastRunCompletedAt: failedAt,
+      lastErrorAt: failedAt,
+      lastErrorMessage:
+        `Unable to restore the scheduled trigger before Run Now: ` +
+        getRuntimeErrorMessage(error),
+      lastResult: null,
+    });
+    throw error;
+  }
+}
+
+/** Queues retention from Gmail and refreshes the card immediately. */
+function runRetentionFromSidebar() {
+  assertAdminOwnerAccess();
+  try {
+    const runtime = getRetentionRuntimeState();
+    if (isRetentionRunPending_(runtime)) {
+      return buildSidebarActionResponse_(
+        runtime.lastRunStatus === 'queued'
+          ? 'The retention run is already queued.'
+          : 'A retention run is already in progress.',
+      );
+    }
+
+    const staleRequest = getQueuedRetentionRunRequest_();
+    if (staleRequest) {
+      restoreManagedScheduleAfterSidebarRun_(staleRequest);
+    }
+
+    const configuration = getRetentionScheduleConfiguration();
+    const status = getRetentionTriggerStatus();
+    const existingTriggers = getRetentionClockTriggers();
+    const managedTrigger = configuration.managedTriggerId
+      ? existingTriggers.find(
+        trigger => trigger.getUniqueId() === configuration.managedTriggerId,
+      ) || null
+      : null;
+    if (
+      !configuration.configured ||
+      !configuration.preferences.enabled ||
+      !managedTrigger ||
+      status.needsRepair
+    ) {
+      throw new Error(
+        'Run Now requires an active managed schedule. Save or repair the ' +
+          'schedule first.',
+      );
+    }
+
+    const preferences = configuration.preferences;
+    ScriptApp.deleteTrigger(managedTrigger);
+    let temporaryTrigger = null;
+    try {
+      temporaryTrigger = ScriptApp.newTrigger(RETENTION_SCHEDULE_HANDLER)
+        .timeBased()
+        .after(5000)
+        .create();
+      const queuedAt = new Date().toISOString();
+      saveQueuedRetentionRunRequest_(
+        temporaryTrigger.getUniqueId(),
+        preferences,
+        queuedAt,
+      );
+      saveRetentionScheduleConfiguration(
+        preferences,
+        temporaryTrigger.getUniqueId(),
+      );
+      updateRetentionRuntimeStateSafely({
+        lastRunSource: 'manual',
+        lastRunStatus: 'queued',
+        lastRunQueuedAt: queuedAt,
+        lastErrorMessage: null,
+      });
+    } catch (error) {
+      if (temporaryTrigger) {
+        deleteProjectTriggerById_(temporaryTrigger.getUniqueId());
+      }
+      clearQueuedRetentionRunRequest_();
+      try {
+        const restoredTrigger = createManagedRetentionTrigger(preferences);
+        saveRetentionScheduleConfiguration(
+          preferences,
+          restoredTrigger.getUniqueId(),
+        );
+      } catch (restoreError) {
+        saveRetentionScheduleConfiguration(preferences, null);
+        throw new Error(
+          `Unable to queue Run Now or restore the schedule. ` +
+            `${getRuntimeErrorMessage(error)} ` +
+            `${getRuntimeErrorMessage(restoreError)}`,
+        );
+      }
+      throw new Error(`Unable to queue Run Now: ${getRuntimeErrorMessage(error)}`);
+    }
+    return buildSidebarActionResponse_(
+      'Retention run queued. Use Refresh Status to check its progress.',
+    );
+  } catch (error) {
+    return buildSidebarActionResponse_(getRuntimeErrorMessage(error));
+  }
+}
+
+/** Refreshes background-run state without starting another scan. */
+function refreshRetentionSidebarStatus() {
+  assertAdminOwnerAccess();
+  return buildSidebarActionResponse_();
+}
+
+/**
  * Saves the administration-page color theme independently from retention
  * settings so switching appearance never creates unsaved retention changes.
  *
@@ -1702,8 +3186,8 @@ function saveAdminTheme(theme) {
 }
 
 /**
- * Saves admin-page settings after server validation and confirmation of changes
- * that can orphan existing Gmail labels or filters.
+ * Saves admin-page settings after server validation. Root-label changes rename
+ * the existing Gmail label tree in place so filter references remain valid.
  *
  * @param {Object} request Settings and risk acknowledgements from the webpage.
  * @return {Object} Saved settings and timestamp.
@@ -1738,12 +3222,6 @@ function saveAdminPageSettings(request) {
       validatedSettings.SYSTEM_NOTIFICATION_LABEL_SUFFIX !==
         currentSettings.SYSTEM_NOTIFICATION_LABEL_SUFFIX;
 
-    if (rootChanged && acknowledgements.rootLabelChange !== true) {
-      throw new Error(
-        'Confirm that changing the root label does not rename existing Gmail ' +
-        'labels or update Gmail filters.',
-      );
-    }
     if (systemLabelChanged && acknowledgements.systemLabelChange !== true) {
       throw new Error(
         'Confirm that changing the system-notification label may leave the old ' +
@@ -1752,8 +3230,25 @@ function saveAdminPageSettings(request) {
     }
 
     createRetentionSettingsBackup('settings_change');
+    const savedSettings = saveRetentionSettings(validatedSettings);
+    let rootRename = { renamedLabelCount: 0 };
+    try {
+      if (rootChanged) {
+        rootRename = renameRetentionRootLabelTree(
+          currentSettings.ROOT_LABEL,
+          validatedSettings.ROOT_LABEL,
+        );
+        if (rootRename.renamedLabelCount === 0) {
+          initializeDefaultRetentionLabels();
+        }
+      }
+    } catch (error) {
+      saveRetentionSettings(currentSettings);
+      throw error;
+    }
     response = {
-      settings: saveRetentionSettings(validatedSettings),
+      settings: savedSettings,
+      rootRename,
       backups: getRetentionSettingsBackupsForAdmin(),
       savedAt: new Date().toISOString(),
     };
@@ -1767,7 +3262,7 @@ function saveAdminPageSettings(request) {
 
 /**
  * Restores a validated backup after preserving the current active settings.
- * Existing Gmail labels and filters are never renamed as a side effect.
+ * A restored root-label value renames the existing Gmail label tree in place.
  *
  * @param {Object} request Backup ID and explicit acknowledgements.
  * @return {Object} Restored settings, refreshed backups, and timestamp.
@@ -1806,12 +3301,6 @@ function restoreRetentionSettingsBackupFromAdmin(request) {
       restoredSettings.SYSTEM_NOTIFICATION_LABEL_SUFFIX !==
         currentSettings.SYSTEM_NOTIFICATION_LABEL_SUFFIX;
 
-    if (rootChanged && acknowledgements.rootLabelChange !== true) {
-      throw new Error(
-        'Confirm that restoring the root label does not rename existing Gmail ' +
-        'labels or update Gmail filters.',
-      );
-    }
     if (systemLabelChanged && acknowledgements.systemLabelChange !== true) {
       throw new Error(
         'Confirm that restoring the system-notification label may leave the ' +
@@ -1820,8 +3309,25 @@ function restoreRetentionSettingsBackupFromAdmin(request) {
     }
 
     createRetentionSettingsBackup('restore');
+    const savedSettings = saveRetentionSettings(restoredSettings);
+    let rootRename = { renamedLabelCount: 0 };
+    try {
+      if (rootChanged) {
+        rootRename = renameRetentionRootLabelTree(
+          currentSettings.ROOT_LABEL,
+          restoredSettings.ROOT_LABEL,
+        );
+        if (rootRename.renamedLabelCount === 0) {
+          initializeDefaultRetentionLabels();
+        }
+      }
+    } catch (error) {
+      saveRetentionSettings(currentSettings);
+      throw error;
+    }
     response = {
-      settings: saveRetentionSettings(restoredSettings),
+      settings: savedSettings,
+      rootRename,
       backups: getRetentionSettingsBackupsForAdmin(),
       restoredBackupId: backup.id,
       restoredAt: new Date().toISOString(),
@@ -1893,6 +3399,27 @@ function applyRetentionScheduleFromAdmin(request, repairOnly) {
         'Confirm that Retention Manager may replace or remove the existing ' +
         'retention trigger(s).',
       );
+    }
+
+    const scheduleIsAlreadyApplied =
+      !repairOnly &&
+      beforeConfiguration.configured &&
+      !beforeStatus.needsRepair &&
+      retentionSchedulePreferencesEqual(
+        preferences,
+        beforeConfiguration.preferences,
+      ) &&
+      (
+        (preferences.enabled && Boolean(managedTrigger)) ||
+        (!preferences.enabled && existingTriggers.length === 0)
+      );
+
+    if (scheduleIsAlreadyApplied) {
+      return {
+        action: 'unchanged',
+        trigger: beforeStatus,
+        savedAt: new Date().toISOString(),
+      };
     }
 
     if (
@@ -2083,10 +3610,259 @@ function getProjectReleaseUrl() {
  */
 function getAdminPageUrl() {
   try {
-    return ScriptApp.getService().getUrl() || '';
+    const cachedUrl = normalizeAdminPageUrl_(
+      CacheService.getScriptCache().get(RETENTION_ADMIN_PAGE_URL_CACHE_KEY),
+    );
+    if (cachedUrl) {
+      return cachedUrl;
+    }
   } catch (error) {
     verboseLog(
-      'ADMIN PAGE URL FAILURE',
+      'ADMIN PAGE URL CACHE READ FAILURE',
+      error && error.stack ? error.stack : String(error),
+    );
+  }
+
+  const storedUrl = PropertiesService.getScriptProperties().getProperty(
+    RETENTION_ADMIN_PAGE_URL_PROPERTY_KEY,
+  );
+  return normalizeAdminPageUrl_(storedUrl);
+}
+
+/**
+ * Accepts only a deployed Apps Script web-app /exec URL. Deployment-context
+ * discovery is intentionally avoided because an add-on execution can resolve
+ * ScriptApp.getService().getUrl() to a library or add-on URL instead.
+ *
+ * @param {*} value Candidate URL from Script Properties.
+ * @return {string} Validated web-app URL, or an empty string.
+ */
+function normalizeAdminPageUrl_(value) {
+  const url = typeof value === 'string' ? value.trim() : '';
+  return /^https:\/\/script\.google\.com\/macros\/s\/[A-Za-z0-9_-]+\/exec$/.test(
+    url,
+  )
+    ? url
+    : '';
+}
+
+/** Stores one validated URL in persistent and short-term caches. */
+function storeAdminPageUrl_(value) {
+  const url = normalizeAdminPageUrl_(value);
+  if (!url) {
+    return '';
+  }
+  PropertiesService.getScriptProperties().setProperty(
+    RETENTION_ADMIN_PAGE_URL_PROPERTY_KEY,
+    url,
+  );
+  try {
+    CacheService.getScriptCache().put(
+      RETENTION_ADMIN_PAGE_URL_CACHE_KEY,
+      url,
+      21600,
+    );
+  } catch (error) {
+    verboseLog(
+      'ADMIN PAGE URL CACHE WRITE FAILURE',
+      error && error.stack ? error.stack : String(error),
+    );
+  }
+  return url;
+}
+
+/** @return {?Object} Valid one-time admin-page setup state. */
+function getAdminPageSetupState_() {
+  const stored = PropertiesService.getScriptProperties().getProperty(
+    RETENTION_ADMIN_PAGE_SETUP_PROPERTY_KEY,
+  );
+  if (!stored) {
+    return null;
+  }
+  try {
+    const state = JSON.parse(stored);
+    if (
+      !isConfigurationObject(state) ||
+      !['queued', 'error'].includes(state.status) ||
+      typeof state.updatedAt !== 'string' ||
+      Number.isNaN(new Date(state.updatedAt).getTime())
+    ) {
+      throw new Error('invalid setup state');
+    }
+    return {
+      status: state.status,
+      triggerId: typeof state.triggerId === 'string' ? state.triggerId : '',
+      updatedAt: state.updatedAt,
+      message: typeof state.message === 'string' ? state.message : '',
+    };
+  } catch (error) {
+    PropertiesService.getScriptProperties().deleteProperty(
+      RETENTION_ADMIN_PAGE_SETUP_PROPERTY_KEY,
+    );
+    return null;
+  }
+}
+
+/** Saves one serializable admin-page setup state. */
+function saveAdminPageSetupState_(state) {
+  PropertiesService.getScriptProperties().setProperty(
+    RETENTION_ADMIN_PAGE_SETUP_PROPERTY_KEY,
+    JSON.stringify(state),
+  );
+  return state;
+}
+
+/** Returns every outstanding one-time admin-page registration trigger. */
+function getAdminPageSetupTriggers_() {
+  return ScriptApp.getProjectTriggers().filter(trigger =>
+    trigger.getHandlerFunction() === RETENTION_ADMIN_PAGE_SETUP_HANDLER,
+  );
+}
+
+/** Deletes outstanding setup triggers without allowing cleanup to fail. */
+function deleteAdminPageSetupTriggers_() {
+  getAdminPageSetupTriggers_().forEach(trigger => {
+    try {
+      ScriptApp.deleteTrigger(trigger);
+    } catch (error) {
+      verboseLog(
+        'ADMIN PAGE SETUP TRIGGER DELETE FAILURE',
+        error && error.stack ? error.stack : String(error),
+      );
+    }
+  });
+}
+
+/**
+ * Ensures first-open setup has one background execution queued. A card action
+ * cannot reliably obtain the web-app URL because it runs under the add-on head
+ * deployment; a time-driven execution resolves the deployed web app instead.
+ *
+ * @return {Object} Current setup status for the sidebar.
+ */
+function ensureAdminPageSetupQueued_() {
+  if (getAdminPageUrl()) {
+    return { status: 'ready', message: '' };
+  }
+
+  let state = getAdminPageSetupState_();
+  const setupTriggers = getAdminPageSetupTriggers_();
+  if (state && state.status === 'error') {
+    return state;
+  }
+
+  if (state && state.status === 'queued') {
+    const queuedAt = new Date(state.updatedAt);
+    if (Date.now() - queuedAt.getTime() < RETENTION_ADMIN_PAGE_SETUP_STALE_MS) {
+      if (setupTriggers.length > 0) {
+        setupTriggers.slice(1).forEach(trigger => ScriptApp.deleteTrigger(trigger));
+        return state;
+      }
+    }
+    deleteAdminPageSetupTriggers_();
+    state = saveAdminPageSetupState_({
+      status: 'error',
+      triggerId: '',
+      updatedAt: new Date().toISOString(),
+      message: 'Advanced Settings setup did not finish. Confirm that the ' +
+        'project has a non-test web app deployment, then retry setup.',
+    });
+    return state;
+  }
+
+  if (setupTriggers.length > 0) {
+    setupTriggers.slice(1).forEach(trigger => ScriptApp.deleteTrigger(trigger));
+    return saveAdminPageSetupState_({
+      status: 'queued',
+      triggerId: setupTriggers[0].getUniqueId(),
+      updatedAt: new Date().toISOString(),
+      message: '',
+    });
+  }
+
+  try {
+    const trigger = ScriptApp.newTrigger(RETENTION_ADMIN_PAGE_SETUP_HANDLER)
+      .timeBased()
+      .after(1000)
+      .create();
+    return saveAdminPageSetupState_({
+      status: 'queued',
+      triggerId: trigger.getUniqueId(),
+      updatedAt: new Date().toISOString(),
+      message: '',
+    });
+  } catch (error) {
+    return saveAdminPageSetupState_({
+      status: 'error',
+      triggerId: '',
+      updatedAt: new Date().toISOString(),
+      message: 'Unable to start Advanced Settings setup. ' +
+        getRuntimeErrorMessage(error),
+    });
+  }
+}
+
+/**
+ * One-time background handler that captures the deployed web-app URL and then
+ * removes every copy of its temporary setup trigger.
+ */
+function registerRetentionAdminPageUrl() {
+  try {
+    const adminPageUrl = rememberCurrentAdminPageUrl_();
+    if (!adminPageUrl) {
+      throw new Error(
+        'No deployed web app URL was available. Confirm that a non-test web ' +
+          'app deployment exists.',
+      );
+    }
+    PropertiesService.getScriptProperties().deleteProperty(
+      RETENTION_ADMIN_PAGE_SETUP_PROPERTY_KEY,
+    );
+  } catch (error) {
+    saveAdminPageSetupState_({
+      status: 'error',
+      triggerId: '',
+      updatedAt: new Date().toISOString(),
+      message: getRuntimeErrorMessage(error),
+    });
+  } finally {
+    deleteAdminPageSetupTriggers_();
+  }
+}
+
+/** Clears a failed setup and immediately queues a fresh one from the card. */
+function retryRetentionAdminPageSetup() {
+  assertAdminOwnerAccess();
+  deleteAdminPageSetupTriggers_();
+  PropertiesService.getScriptProperties().deleteProperty(
+    RETENTION_ADMIN_PAGE_SETUP_PROPERTY_KEY,
+  );
+  const state = ensureAdminPageSetupQueued_();
+  const message = state.status === 'error'
+    ? state.message
+    : 'Advanced Settings setup restarted. Refresh again in a few moments.';
+  return buildSidebarActionResponse_(message);
+}
+
+/**
+ * Captures the web-app URL only from non-card execution contexts. This helper
+ * is called by doGet() and retention runs, where getService().getUrl() resolves
+ * the deployed web app. Gmail card rendering deliberately never calls it.
+ *
+ * @return {string} Validated and stored web-app URL, or an empty string.
+ */
+function rememberCurrentAdminPageUrl_() {
+  try {
+    const currentUrl = normalizeAdminPageUrl_(
+      ScriptApp.getService().getUrl() || '',
+    );
+    if (!currentUrl) {
+      return '';
+    }
+    return storeAdminPageUrl_(currentUrl);
+  } catch (error) {
+    verboseLog(
+      'ADMIN PAGE URL REGISTRATION FAILURE',
       error && error.stack ? error.stack : String(error),
     );
     return '';
@@ -2276,7 +4052,7 @@ function getLatestPublishedRelease() {
       headers: {
         Accept: 'application/vnd.github+json',
         'X-GitHub-Api-Version': '2026-03-10',
-        'User-Agent': 'gmail-retention-manager',
+        'User-Agent': 'retention-manager-for-gmail',
       },
       muteHttpExceptions: true,
       followRedirects: true,
@@ -2520,16 +4296,28 @@ function escapeRegExp(value) {
  * The returned object is ignored by scheduled triggers and displayed by the
  * admin page after a manual run.
  *
+ * @param {Object=} event Apps Script trigger event for scheduled executions.
  * @return {Object} Serializable outcome of the retention run.
  */
-function enforceGmailRetention() {
+function enforceGmailRetention(event) {
   const startedAt = new Date();
-  updateRetentionRuntimeStateSafely({
+  const queuedSidebarRun = prepareQueuedRetentionRun_(event);
+  const runSource = queuedSidebarRun ? 'manual' : getRetentionRunSource(event);
+  rememberCurrentAdminPageUrl_();
+  const startedState = {
+    lastRunSource: runSource,
     lastRunStatus: 'running',
+    lastRunQueuedAt: null,
     lastRunStartedAt: startedAt.toISOString(),
     lastRunCompletedAt: null,
     lastResult: null,
-  });
+  };
+  if (runSource === 'scheduled') {
+    startedState.lastScheduledRunStartedAt = startedAt.toISOString();
+  } else {
+    startedState.lastManualRunStartedAt = startedAt.toISOString();
+  }
+  updateRetentionRuntimeStateSafely(startedState);
 
   try {
     const result = executeGmailRetention_();
@@ -2540,10 +4328,19 @@ function enforceGmailRetention() {
       completedAt: completedAt.toISOString(),
     };
     const stateChanges = {
+      lastRunSource: runSource,
       lastRunStatus: result.status,
       lastRunCompletedAt: completedAt.toISOString(),
       lastResult: completedResult,
     };
+
+    if (runSource === 'scheduled') {
+      stateChanges.lastScheduledRunCompletedAt = completedAt.toISOString();
+      stateChanges.lastScheduledResult = completedResult;
+    } else {
+      stateChanges.lastManualRunCompletedAt = completedAt.toISOString();
+      stateChanges.lastManualResult = completedResult;
+    }
 
     if (result.status === 'success') {
       stateChanges.lastSuccessfulRunAt = completedAt.toISOString();
@@ -2564,13 +4361,22 @@ function enforceGmailRetention() {
     return completedResult;
   } catch (error) {
     const failedAt = new Date().toISOString();
-    updateRetentionRuntimeStateSafely({
+    const failedState = {
+      lastRunSource: runSource,
       lastRunStatus: 'error',
       lastRunCompletedAt: failedAt,
       lastErrorAt: failedAt,
       lastErrorMessage: getRuntimeErrorMessage(error),
       lastResult: null,
-    });
+    };
+    if (runSource === 'scheduled') {
+      failedState.lastScheduledRunCompletedAt = failedAt;
+      failedState.lastScheduledResult = null;
+    } else {
+      failedState.lastManualRunCompletedAt = failedAt;
+      failedState.lastManualResult = null;
+    }
+    updateRetentionRuntimeStateSafely(failedState);
     throw error;
   }
 }
@@ -2615,7 +4421,8 @@ function executeGmailRetention_() {
     });
 
     console.log(
-      `Starting Gmail Retention Manager ${RETENTION_CONFIG.VERSION}` +
+      `Starting ${RETENTION_CONFIG.APPLICATION_NAME} ` +
+        `${RETENTION_CONFIG.VERSION}` +
       `${effectiveUserEmail ? ` for ${effectiveUserEmail}` : ''}.`,
     );
 
@@ -2634,7 +4441,7 @@ function executeGmailRetention_() {
       'DISCOVERY',
       `Discovered ${discoveredRetentionLabels.length} valid retention policy label(s).`,
     );
-    const systemNotificationLabel = GmailApp.getUserLabelByName(
+    const systemNotificationLabel = GmailApiApp.getUserLabelByName(
       getSystemNotificationLabelName(),
     );
 
@@ -2683,6 +4490,7 @@ function executeGmailRetention_() {
       systemNotificationLabel,
     );
     verboseLog('THREAD COLLECTION', `Collected ${threadMap.size} unique thread(s).`);
+    preflightGmailApiThreads_(threadMap);
     const pendingDeletions = [];
     const excludedArchiveMessageIds = new Set();
     let removedRetentionLabelCount = 0;
@@ -2691,6 +4499,7 @@ function executeGmailRetention_() {
       verboseLog('THREAD', `Processing thread ${thread.getId()}.`);
       const threadLabels = thread.getLabels();
       const threadIsInTrash = thread.isInTrash();
+      const messages = thread.getMessages();
       verboseLog('THREAD LABELS', {
         threadId: thread.getId(),
         labels: threadLabels.map(label => label.getName()),
@@ -2700,7 +4509,6 @@ function executeGmailRetention_() {
         label => labelNamesEqual(label.getName(), getSystemNotificationLabelName()),
       );
 
-      const messages = thread.getMessages();
       const activeMessages = messages.filter(message => !message.isInTrash());
       if (isSystemNotification) {
         activeMessages.forEach(message => {
@@ -2871,8 +4679,9 @@ function executeGmailRetention_() {
       ? sendUpdateOnlyNotificationIfNeeded(availableUpdate, now)
       : 0;
 
+    const operationErrors = [...archiveResult.errors];
     const result = {
-      status: 'success',
+      status: operationErrors.length > 0 ? 'warning' : 'success',
       reviewedConversationCount: threadMap.size,
       movedMessageCount: deletionResult.movedMessageCount,
       movedConversationCount: deletionResult.movedThreadCount,
@@ -2883,7 +4692,7 @@ function executeGmailRetention_() {
       archivedConversationCount: archiveResult.archivedConversationCount,
       archiveLookupFailureCount: archiveResult.lookupFailureCount,
       archiveFailedMessageCount: archiveResult.failedMessageCount,
-      operationErrors: archiveResult.errors,
+      operationErrors,
       summaryEmailCount,
       updateOnlyEmailCount,
       availableUpdate,
@@ -2911,7 +4720,7 @@ function executeGmailRetention_() {
     return result;
   } catch (error) {
     console.error(
-      `Gmail Retention Manager ${RETENTION_CONFIG.VERSION} failed: ` +
+      `${RETENTION_CONFIG.APPLICATION_NAME} ${RETENTION_CONFIG.VERSION} failed: ` +
       `${error && error.stack ? error.stack : error}`,
     );
     throw error;
@@ -3001,7 +4810,8 @@ function setupGmailRetention() {
   verboseLog('SETUP', 'setupGmailRetention() entered.');
   const effectiveUserEmail = Session.getEffectiveUser().getEmail();
   console.log(
-    `Setting up Gmail Retention Manager ${RETENTION_CONFIG.VERSION}` +
+    `Setting up ${RETENTION_CONFIG.APPLICATION_NAME} ` +
+      `${RETENTION_CONFIG.VERSION}` +
     `${effectiveUserEmail ? ` for ${effectiveUserEmail}` : ''}.`,
   );
 
@@ -3025,7 +4835,7 @@ function setupGmailRetention() {
  */
 function diagnoseGmailRetentionLabels() {
   console.log(
-    `Starting label diagnostics for Gmail Retention Manager ` +
+    `Starting label diagnostics for ${RETENTION_CONFIG.APPLICATION_NAME} ` +
       `${RETENTION_CONFIG.VERSION}.`,
   );
   verboseLabelSnapshot('DIAGNOSTIC INITIAL LABEL SNAPSHOT');
@@ -3043,7 +4853,7 @@ function diagnoseGmailRetentionLabels() {
  * This is what allows new retention periods to work without code changes.
  *
  * Labels created moments earlier are accepted as an optional argument. Including
- * them directly avoids depending on GmailApp.getUserLabels() reflecting new
+ * them directly avoids depending on GmailApiApp.getUserLabels() reflecting new
  * labels immediately within the same execution.
  *
  * @param {GmailLabel[]} initializedLabels Labels created during this run.
@@ -3056,7 +4866,7 @@ function discoverRetentionLabels(initializedLabels = []) {
   });
   const labelsByName = new Map();
 
-  const gmailLabels = GmailApp.getUserLabels();
+  const gmailLabels = GmailApiApp.getUserLabels();
   verboseLog('DISCOVERY RAW GMAIL LABELS', gmailLabels.map(describeLabel));
 
   for (const label of [
@@ -3219,6 +5029,44 @@ function collectUniqueThreads(retentionPolicies, systemNotificationLabel) {
 }
 
 /**
+ * Loads every relevant conversation before any conversation label or message is
+ * changed. A persistent Gmail read failure therefore stops the run fail-closed
+ * instead of producing incomplete retention results.
+ */
+function preflightGmailApiThreads_(threadMap) {
+  verboseLog(
+    'THREAD PREFLIGHT',
+    `Validating ${threadMap.size} conversation(s) before processing.`,
+  );
+  for (const thread of threadMap.values()) {
+    try {
+      getGmailApiThreadResource_(thread.getId(), false);
+    } catch (error) {
+      const labelNames = typeof thread.getDiscoveryLabelNames_ === 'function'
+        ? thread.getDiscoveryLabelNames_()
+        : [];
+      const accountEmail = Session.getEffectiveUser().getEmail() || '';
+      const permalink = accountEmail
+        ? `https://mail.google.com/mail/u/?authuser=` +
+          `${encodeURIComponent(accountEmail)}#all/` +
+          `${encodeURIComponent(thread.getId())}`
+        : `https://mail.google.com/mail/u/0/#all/` +
+          `${encodeURIComponent(thread.getId())}`;
+      throw new Error(
+        `Retention scan stopped before conversation processing. Gmail could ` +
+          `not read conversation ${thread.getId()} after retries and fallback ` +
+          `requests. Discovery label(s): ` +
+          `${labelNames.join(', ') || '(unknown)'}. Open conversation: ` +
+          `${permalink}. No conversation labels were changed and no messages ` +
+          `were moved to Trash during this run. Details: ` +
+          `${getRuntimeErrorMessage(error)}`,
+      );
+    }
+  }
+  verboseLog('THREAD PREFLIGHT', 'All conversations passed validation.');
+}
+
+/**
  * Adds every thread carrying one label to a shared deduplication map.
  *
  * @param {GmailLabel} label Gmail label to enumerate.
@@ -3245,7 +5093,12 @@ function addLabelThreadsToMap(label, threadMap) {
     });
 
     for (const thread of threads) {
-      threadMap.set(thread.getId(), thread);
+      const existingThread = threadMap.get(thread.getId());
+      const retainedThread = existingThread || thread;
+      if (typeof retainedThread.addDiscoveryLabelName_ === 'function') {
+        retainedThread.addDiscoveryLabelName_(label.getName());
+      }
+      threadMap.set(thread.getId(), retainedThread);
     }
 
     if (threads.length < RETENTION_CONFIG.THREAD_PAGE_SIZE) {
@@ -3828,7 +5681,7 @@ function removeSystemNotificationLabels(thread) {
  * a system email is sent.
  */
 function deleteSystemNotificationLabelIfUnused() {
-  const systemLabel = GmailApp.getUserLabelByName(
+  const systemLabel = GmailApiApp.getUserLabelByName(
     getSystemNotificationLabelName(),
   );
 
@@ -3871,13 +5724,13 @@ function getSystemNotificationDeliveryContext() {
  * @return {GmailMessage} Sent Gmail message.
  */
 function sendManagedSystemEmail(context, subject, plainBody, htmlBody) {
-  const sentMessage = GmailApp.createDraft(
+  const sentMessage = GmailApiApp.createDraft(
     context.recipient,
     subject,
     plainBody,
     {
       htmlBody,
-      name: 'Gmail Retention Manager',
+      name: RETENTION_CONFIG.APPLICATION_NAME,
     },
   ).send();
   const notificationThread = sentMessage.getThread();
@@ -4086,7 +5939,7 @@ function buildHtmlAvailableUpdateNotice(availableUpdate) {
 
   return `
     <div style="margin:16px 0;padding:14px;border:1px solid #8ab4f8;border-radius:8px;background:#e8f0fe;color:#174ea6;">
-      <strong>Gmail Retention Manager update available</strong><br>
+      <strong>${escapeHtml(RETENTION_CONFIG.APPLICATION_NAME)} update available</strong><br>
       Installed version: v${escapeHtml(RETENTION_CONFIG.VERSION)}<br>
       Available version: v${escapeHtml(availableUpdate.version)}<br>
       <a href="${escapeHtml(availableUpdate.releaseUrl)}" style="font-weight:700;">
@@ -4108,7 +5961,7 @@ function buildHtmlAdminPageLink(adminPageUrl) {
   return `
     <p style="margin:16px 0 0;">
       <a href="${escapeHtml(adminPageUrl)}" style="font-weight:700;">
-        Manage Gmail Retention Manager settings
+        Manage ${escapeHtml(RETENTION_CONFIG.APPLICATION_NAME)} settings
       </a>
     </p>`;
 }
@@ -4196,7 +6049,9 @@ function buildHtmlSummary(
 
   return `
     <div style="font-family:Arial,sans-serif;font-size:14px;color:#202124;">
-      <h2 style="margin:0 0 12px;">Gmail Retention Summary</h2>
+      <h2 style="margin:0 0 12px;">
+        ${escapeHtml(RETENTION_CONFIG.APPLICATION_NAME)} Summary
+      </h2>
       <p style="margin:0 0 12px;">
         The retention run completed at ${escapeHtml(formattedRunDate)} and moved
         ${totalRecordCount} message(s) to Trash.${escapeHtml(partText)}
@@ -4226,7 +6081,7 @@ function buildHtmlSummary(
       ${buildHtmlAdminPageLink(adminPageUrl)}
       <p style="margin:8px 0 0;color:#5f6368;font-size:12px;">
         Generated by
-        <a href="${escapeHtml(RETENTION_CONFIG.PROJECT_REPOSITORY_URL)}">Gmail Retention Manager</a>
+        <a href="${escapeHtml(RETENTION_CONFIG.PROJECT_REPOSITORY_URL)}">${escapeHtml(RETENTION_CONFIG.APPLICATION_NAME)}</a>
         &middot;
         <a href="${escapeHtml(getProjectReleaseUrl())}">v${escapeHtml(RETENTION_CONFIG.VERSION)}</a>
       </p>
@@ -4261,7 +6116,7 @@ function buildPlainTextSummary(
     : '';
 
   const lines = [
-    'Gmail Retention Summary',
+    `${RETENTION_CONFIG.APPLICATION_NAME} Summary`,
     '',
     `Run completed: ${formattedRunDate}`,
     `Messages moved to Trash: ${totalRecordCount}.${partText}`,
@@ -4303,7 +6158,7 @@ function buildPlainTextSummary(
   lines.push(...getPlainTextVerboseLoggingWarningLines());
   lines.push('');
   if (adminPageUrl) {
-    lines.push(`Manage Gmail Retention Manager settings: ${adminPageUrl}`);
+    lines.push(`Manage ${RETENTION_CONFIG.APPLICATION_NAME} settings: ${adminPageUrl}`);
   } else {
     lines.push(
       'Admin page: unavailable until this Apps Script project is deployed as ' +
@@ -4311,7 +6166,8 @@ function buildPlainTextSummary(
     );
   }
   lines.push(
-    `Generated by Gmail Retention Manager v${RETENTION_CONFIG.VERSION}: ` +
+    `Generated by ${RETENTION_CONFIG.APPLICATION_NAME} ` +
+      `v${RETENTION_CONFIG.VERSION}: ` +
     getProjectReleaseUrl(),
   );
   lines.push(`Repository: ${RETENTION_CONFIG.PROJECT_REPOSITORY_URL}`);
@@ -4334,7 +6190,7 @@ function buildHtmlUpdateNotification(
 ) {
   return `
     <div style="font-family:Arial,sans-serif;font-size:14px;color:#202124;">
-      <h2 style="margin:0 0 12px;">Gmail Retention Manager Update Available</h2>
+      <h2 style="margin:0 0 12px;">${escapeHtml(RETENTION_CONFIG.APPLICATION_NAME)} Update Available</h2>
       <p style="margin:0 0 12px;">
         Version ${escapeHtml(availableUpdate.version)} is now available. This
         installation is currently running version
@@ -4365,7 +6221,7 @@ function buildHtmlUpdateNotification(
       ${buildHtmlAdminPageLink(adminPageUrl)}
       <p style="margin:8px 0 0;color:#5f6368;font-size:12px;">
         Generated by
-        <a href="${escapeHtml(RETENTION_CONFIG.PROJECT_REPOSITORY_URL)}">Gmail Retention Manager</a>
+        <a href="${escapeHtml(RETENTION_CONFIG.PROJECT_REPOSITORY_URL)}">${escapeHtml(RETENTION_CONFIG.APPLICATION_NAME)}</a>
         &middot;
         <a href="${escapeHtml(getProjectReleaseUrl())}">v${escapeHtml(RETENTION_CONFIG.VERSION)}</a>
       </p>
@@ -4386,7 +6242,7 @@ function buildPlainTextUpdateNotification(
   adminPageUrl,
 ) {
   const lines = [
-    'Gmail Retention Manager Update Available',
+    `${RETENTION_CONFIG.APPLICATION_NAME} Update Available`,
     '',
     `Installed version: v${RETENTION_CONFIG.VERSION}`,
     `Available version: v${availableUpdate.version}`,
@@ -4405,7 +6261,7 @@ function buildPlainTextUpdateNotification(
   ];
 
   if (adminPageUrl) {
-    lines.push(`Manage Gmail Retention Manager settings: ${adminPageUrl}`);
+    lines.push(`Manage ${RETENTION_CONFIG.APPLICATION_NAME} settings: ${adminPageUrl}`);
   } else {
     lines.push(
       'Admin page: unavailable until this Apps Script project is deployed as ' +
@@ -4459,10 +6315,10 @@ function getOrCreateLabel(labelName) {
 
     verboseLog('GET OR CREATE LABEL CREATE ATTEMPT', currentPath);
     try {
-      deepestLabel = GmailApp.createLabel(currentPath);
+      deepestLabel = GmailApiApp.createLabel(currentPath);
     } catch (error) {
       console.error(
-        `GmailApp.createLabel(${JSON.stringify(currentPath)}) failed: ` +
+        `GmailApiApp.createLabel(${JSON.stringify(currentPath)}) failed: ` +
           `${error && error.stack ? error.stack : error}`,
       );
       throw error;
@@ -4493,7 +6349,7 @@ function getOrCreateLabel(labelName) {
 
     if (!verifiedLabel) {
       throw new Error(
-        `GmailApp.createLabel() returned a label for ${currentPath}, but ` +
+        `GmailApiApp.createLabel() returned a label for ${currentPath}, but ` +
           'the label could not be found during verification.',
       );
     }
@@ -4517,14 +6373,14 @@ function findUserLabelByName(labelName) {
   const normalizedTarget = normalizeRetentionLabelName(labelName).toLowerCase();
   verboseLog('FIND LABEL', { labelName, normalizedTarget });
 
-  const directMatch = GmailApp.getUserLabelByName(labelName);
+  const directMatch = GmailApiApp.getUserLabelByName(labelName);
   verboseLog('FIND LABEL DIRECT RESULT', describeLabel(directMatch));
 
   if (directMatch) {
     return directMatch;
   }
 
-  const userLabels = GmailApp.getUserLabels();
+  const userLabels = GmailApiApp.getUserLabels();
   const scannedMatch = userLabels.find(label =>
     normalizeRetentionLabelName(label.getName()).toLowerCase() ===
       normalizedTarget,
@@ -4597,10 +6453,10 @@ function verboseLabelSnapshot(step) {
 
   let labels;
   try {
-    labels = GmailApp.getUserLabels();
+    labels = GmailApiApp.getUserLabels();
   } catch (error) {
     console.error(
-      `[VERBOSE][${step}] GmailApp.getUserLabels() failed: ` +
+      `[VERBOSE][${step}] GmailApiApp.getUserLabels() failed: ` +
         `${error && error.stack ? error.stack : error}`,
     );
     throw error;

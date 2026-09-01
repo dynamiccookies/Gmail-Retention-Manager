@@ -1,0 +1,40 @@
+{
+  "timeZone": "America/Chicago",
+  "dependencies": {
+    "enabledAdvancedServices": [
+      {
+        "userSymbol": "Gmail",
+        "serviceId": "gmail",
+        "version": "v1"
+      }
+    ]
+  },
+  "exceptionLogging": "STACKDRIVER",
+  "runtimeVersion": "V8",
+  "oauthScopes": [
+    "https://www.googleapis.com/auth/gmail.addons.execute",
+    "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/script.scriptapp",
+    "https://www.googleapis.com/auth/script.external_request",
+    "https://www.googleapis.com/auth/userinfo.email"
+  ],
+  "urlFetchWhitelist": [
+    "https://api.github.com/repos/dynamiccookies/retention-manager-for-gmail/releases/"
+  ],
+  "addOns": {
+    "common": {
+      "name": "Retention Manager for Gmail™",
+      "logoUrl": "https://fonts.gstatic.com/s/i/googlematerialicons/schedule/v6/black-24dp/1x/gm_schedule_black_24dp.png",
+      "openLinkUrlPrefixes": [
+        "https://script.google.com/macros/s/",
+        "https://github.com/dynamiccookies/retention-manager-for-gmail/"
+      ]
+    },
+    "gmail": {
+      "homepageTrigger": {
+        "runFunction": "buildGmailHomepage",
+        "enabled": true
+      }
+    }
+  }
+}
