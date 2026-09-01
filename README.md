@@ -1,11 +1,14 @@
-# Gmail Retention Manager
+# Retention Manager for Gmail™
 
-[![GitHub License](https://img.shields.io/github/license/dynamiccookies/gmail-retention-manager?style=for-the-badge)](https://github.com/dynamiccookies/gmail-retention-manager/blob/main/LICENSE)
-[![GitHub File Size](https://img.shields.io/github/size/dynamiccookies/gmail-retention-manager/gmail-retention-manager.gs?style=for-the-badge)](https://github.com/dynamiccookies/gmail-retention-manager/blob/main/gmail-retention-manager.gs)
-[![GitHub Release Date](https://img.shields.io/github/release-date/dynamiccookies/gmail-retention-manager?style=for-the-badge)](https://github.com/dynamiccookies/gmail-retention-manager/releases/latest)
-[![GitHub Release](https://img.shields.io/github/v/release/dynamiccookies/gmail-retention-manager?style=for-the-badge)](https://github.com/dynamiccookies/gmail-retention-manager/releases/latest)
+[![GitHub License](https://img.shields.io/github/license/dynamiccookies/retention-manager-for-gmail?style=for-the-badge)](https://github.com/dynamiccookies/retention-manager-for-gmail/blob/main/LICENSE)
+[![GitHub File Size](https://img.shields.io/github/size/dynamiccookies/retention-manager-for-gmail/retention-manager.gs?style=for-the-badge)](https://github.com/dynamiccookies/retention-manager-for-gmail/blob/main/retention-manager.gs)
+[![GitHub Release Date](https://img.shields.io/github/release-date/dynamiccookies/retention-manager-for-gmail?style=for-the-badge)](https://github.com/dynamiccookies/retention-manager-for-gmail/releases/latest)
+[![GitHub Release](https://img.shields.io/github/v/release/dynamiccookies/retention-manager-for-gmail?style=for-the-badge)](https://github.com/dynamiccookies/retention-manager-for-gmail/releases/latest)
 
 Automatically move active Gmail messages to Trash after a retention period defined by a Gmail label.
+
+Retention Manager for Gmail™ is an independent project and is not affiliated
+with Google. Gmail is a trademark of Google LLC.
 
 Gmail filters decide **which conversations receive a retention policy**. This Google Apps Script decides **when those conversations expire**. Add, rename, or remove retention labels without modifying the script.
 
@@ -25,13 +28,21 @@ Gmail filters decide **which conversations receive a retention policy**. This Go
 - Automatic cleanup of the script's own notification messages and temporary labels
 - Optional GitHub release checks with update notices in notification emails
 - Persistent, validated settings that survive source-code updates
+- Gmail sidebar dashboard with runtime status, schedule management, root-label
+  editing, Run Now, and a link to the complete administration page
+- Private HTML administration page for advanced configuration, backups, logging,
+  and diagnostics
+- Managed time-driven schedules that can be created or changed from Gmail
+- Fail-closed Gmail metadata preflight before retention changes begin
+- Narrow `gmail.modify` authorization through the Advanced Gmail service
 - Verbose diagnostic logging for installation and troubleshooting
 - Script locking and batch processing to reduce duplicate or overlapping work
 
 ## How It Works
 
 1. Apply retention labels through Gmail filters, manually, or in bulk. Filters can label new messages as they arrive or apply a policy en masse to matching existing conversations.
-2. A time-driven Apps Script trigger runs `enforceGmailRetention()` on a schedule.
+2. A managed time-driven Apps Script trigger runs the retention processor on the
+   schedule selected in the Gmail sidebar.
 3. The script finds every label beneath the configured root label that contains a valid retention expression.
 4. For each labeled conversation, the script calculates expiration from the newest message date.
 5. When multiple retention labels exist, the policy with the latest actual expiration timestamp wins.
@@ -48,64 +59,71 @@ Gmail filters decide **which conversations receive a retention policy**. This Go
 
 ## Installation
 
-### 1. Download the script
+### 1. Download the application files
 
-Download the latest `gmail-retention-manager.gs` file from the [latest release](https://github.com/dynamiccookies/gmail-retention-manager/releases/latest).
+Download these three files from the
+[latest release](https://github.com/dynamiccookies/retention-manager-for-gmail/releases/latest):
+
+- `retention-manager.gs`
+- `admin.html`
+- `appsscript.json`
 
 ### 2. Create a Google Apps Script project
 
 1. Open [Google Apps Script](https://script.google.com/) and verify that the account shown in the upper-right corner is the Gmail account you want the script to manage. This is especially important when you are signed in to multiple Google accounts.
 2. Select **New project**.
-3. Rename the project to something recognizable, such as `Gmail Retention Manager`.
+3. Rename the project to `Retention Manager for Gmail`.
 4. Delete the sample `myFunction()` code from `Code.gs`.
-5. Paste the full contents of the downloaded `gmail-retention-manager.gs` file into the Apps Script editor.
-6. Save the project.
+5. Rename `Code.gs` to `retention-manager.gs` and paste the corresponding file contents.
+6. Add an HTML file named `admin` and paste the contents of `admin.html`.
+7. Open **Project Settings** and enable **Show "appsscript.json" manifest file in editor**.
+8. Return to the editor and replace the manifest with the downloaded `appsscript.json` contents.
+9. Save the project.
 
-The repository uses the native Google Apps Script `.gs` extension. You can leave the project file named `Code.gs` or rename it to `gmail-retention-manager.gs`; the filename does not affect execution.
+The manifest enables the Advanced Gmail service automatically. Do not create or
+associate a separate Google Cloud project, and do not manually add the Google
+Apps Script API.
 
-### 3. Review the configuration
-
-The script includes these immutable factory defaults:
-
-```javascript
-const RETENTION_FACTORY_DEFAULTS = Object.freeze({
-  VERBOSE_LOGGING: false,
-  ROOT_LABEL: 'Retention',
-  DEFAULT_RETENTION_LABEL_SUFFIXES: Object.freeze(['7d', '1m']),
-  NOTIFICATION_SUBJECT_PREFIX: '[Gmail Retention]',
-  NOTIFICATION_RETENTION_LABEL_SUFFIX: '1d',
-  SYSTEM_NOTIFICATION_LABEL_SUFFIX: '_System',
-  CHECK_FOR_UPDATES: true,
-});
-```
-
-The default configuration works without modification. On the first run, the
-script copies these values into the `GMAIL_RETENTION_CONFIG` Script Property as
-one JSON object with an independent configuration-schema version. From that
-point forward, the saved property—not the source defaults—is the active
-configuration.
-
-Do not edit `RETENTION_FACTORY_DEFAULTS` to change an existing installation.
-Once the Script Property exists, changing a factory default has no effect on
-that installation's active settings.
-
-### 4. Set the project time zone
+### 3. Set the project time zone
 
 1. Open **Project Settings** in the Apps Script sidebar.
 2. Confirm that the project time zone matches your local time zone.
 
 The time zone affects notification timestamps and calendar-based date calculations.
 
-### 5. Run the retention function and authorize the script
+### 4. Deploy the private administration page
 
-1. Select `enforceGmailRetention` from the function dropdown.
-2. Click **Run**.
-3. When Google displays **Authorization required**, select **Review permissions**.
-4. Choose the same Gmail account you verified when creating the project.
-5. Review the permissions requested by the script. Gmail access is required to inspect labels and conversations, manage labels, move expired conversations to Trash, and send summary emails. External-request access is used only for the optional GitHub release check.
-6. If Google displays a **Google hasn't verified this app** warning, select **Advanced**, then continue to the Gmail Retention Manager project. This warning can appear because this is a user-installed Apps Script rather than an app distributed through the Google Workspace Marketplace. Continue only when you installed the script from the repository and are comfortable with the permissions shown.
-7. Select **Allow**.
-8. Wait for the execution to finish and review the execution log for any errors.
+1. Select **Deploy → New deployment**.
+2. Choose **Web app** as the deployment type.
+3. Enter `Advanced Settings` as the description.
+4. Select **Execute as me**.
+5. Limit access to **Only myself**.
+6. Select **Deploy**.
+
+Keep this versioned, non-test deployment active. Retention Manager for Gmail™
+discovers and stores its URL automatically; the installer does not paste or save
+the URL anywhere.
+
+### 5. Install the Gmail add-on
+
+1. Select **Deploy → Test deployments**.
+2. Select **Install** for the Google Workspace add-on.
+3. Open or refresh Gmail.
+4. Open Retention Manager for Gmail™ from Gmail's right sidebar.
+5. Review and approve the requested permissions.
+6. If Google displays a **Google hasn't verified this app** warning, select **Advanced** and continue only if you obtained the code from this repository.
+
+On its first opening, the sidebar automatically creates a one-time trigger that
+records the private web-app URL and then deletes itself. If the card temporarily
+shows **Advanced Settings — Setting Up…**, wait briefly and select **Refresh**.
+No setup function needs to be selected from the Apps Script editor.
+
+### 6. Configure and test retention
+
+1. Choose a schedule in the Gmail sidebar.
+2. Leave the default root label as `Retention`, or change it before creating filters.
+3. Select **Save Settings**. The application creates or updates its managed schedule trigger.
+4. Select **Run Now** to perform the first retention scan.
 
 On a new installation, this run automatically creates:
 
@@ -117,21 +135,8 @@ Retention/1m
 
 The starter sublabels are created **only when the root label does not already exist**. If `Retention` already exists—even with no child labels—the script assumes you have intentionally customized the label structure and does not recreate the defaults.
 
-Running the function does not affect messages unless they already have a valid retention label and their retention period has expired.
-
-### 6. Create the scheduled trigger
-
-1. Open **Triggers** in the Apps Script sidebar.
-2. Click **Add Trigger**.
-3. Configure the trigger:
-
-| Setting | Value |
-|---|---|
-| Function to run | `enforceGmailRetention` |
-| Deployment | `Head` |
-| Event source | `Time-driven` |
-| Trigger type | Select the frequency appropriate for your policies |
-| Failure notifications | Your preferred setting |
+Run Now does not affect messages unless they already have a valid retention label
+and their retention period has expired.
 
 > [!NOTE]
 > The trigger schedule determines enforcement precision. A `Retention/12hrs` label does not cause the script to run every 12 hours. It expires after 12 hours, but the message is moved to Trash only on the next scheduled execution.
@@ -201,7 +206,10 @@ Email Cleanup/30 days
 Email Cleanup/6 months
 ```
 
-Starter labels, notification labels, system labels, and label parsing are all derived from `ROOT_LABEL`. Gmail filters and manually applied labels must use the new root term. Labels beginning with the old root term will no longer be managed, so update any existing filters and labels when changing this setting after installation.
+Starter labels, notification labels, system labels, and label parsing are all
+derived from `ROOT_LABEL`. Changing the root from the sidebar or administration
+page renames the existing root and child labels in place. Gmail filters continue
+to reference the same label IDs, so they follow the renamed labels automatically.
 
 ## Multiple Retention Labels
 
@@ -310,10 +318,11 @@ normal initialized value has this structure:
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "settings": {
     "VERBOSE_LOGGING": false,
     "ROOT_LABEL": "Retention",
+    "ARCHIVE_ON_LABEL": false,
     "DEFAULT_RETENTION_LABEL_SUFFIXES": ["7d", "1m"],
     "NOTIFICATION_SUBJECT_PREFIX": "[Gmail Retention]",
     "NOTIFICATION_RETENTION_LABEL_SUFFIX": "1d",
@@ -336,6 +345,7 @@ is rejected rather than downgraded.
 |---|---:|---|
 | `VERBOSE_LOGGING` | `false` | Enables detailed execution logging for troubleshooting |
 | `ROOT_LABEL` | `'Retention'` | Parent label used for all managed retention policies |
+| `ARCHIVE_ON_LABEL` | `false` | Removes the Inbox label from directly retention-labeled messages that have not expired |
 | `DEFAULT_RETENTION_LABEL_SUFFIXES` | `['7d', '1m']` | Starter child labels created only when the root label is absent |
 | `NOTIFICATION_SUBJECT_PREFIX` | `'[Gmail Retention]'` | Prefix used for deletion-summary subjects |
 | `NOTIFICATION_RETENTION_LABEL_SUFFIX` | `'1d'` | Retention policy applied to generated notifications |
@@ -443,7 +453,7 @@ The update notice appears only when:
 - `CHECK_FOR_UPDATES` is `true`.
 - A deletion notification is generated.
 - The repository has a published release newer than the installed `VERSION`.
-- The release tag uses semantic versioning, such as `v0.6.0`.
+- The release tag uses semantic versioning, such as `v0.7.0`.
 
 GitHub failures and rate limits are intentionally nonfatal and suppress the notice for that run.
 
@@ -473,15 +483,17 @@ The script only processes:
 
 To stop automatic processing without removing the project:
 
-1. Open the Apps Script project.
-2. Open **Triggers**.
-3. Delete or disable the trigger for `enforceGmailRetention()`.
+1. Open the Gmail sidebar.
+2. Turn off **Schedule → Enabled**.
+3. Select **Save Settings**.
 
 To uninstall completely:
 
-1. Remove the scheduled trigger.
-2. Delete the Apps Script project.
-3. Remove any Gmail retention labels and filters you no longer need.
+1. Disable the schedule from the Gmail sidebar.
+2. Open **Deploy → Test deployments** in the Apps Script project and uninstall the add-on.
+3. Archive the private web-app deployment under **Manage deployments**.
+4. Delete the Apps Script project.
+5. Remove any Gmail retention labels and filters you no longer need.
 
 Uninstalling the script does not restore conversations already in Trash.
 
@@ -493,7 +505,7 @@ Versions through v0.5.0 stored user choices directly in `RETENTION_CONFIG`.
 Use this migration sequence so the retention job never runs with unintended
 defaults:
 
-1. Before replacing the old source, record any customized values for the seven user settings in the configuration reference.
+1. Before replacing the old source, record any customized values for the user settings in the configuration reference.
 2. Replace the source and save the project.
 3. Run `getRetentionConfiguration()` once. This creates the Script Property without reading, relabeling, or trashing Gmail messages.
 4. Open **Project Settings → Script Properties** and apply the recorded values inside `GMAIL_RETENTION_CONFIG`.
@@ -504,21 +516,24 @@ the project-scoped Script Property.
 
 ### Routine source update
 
-1. Download the newest `gmail-retention-manager.gs` file from the [latest release](https://github.com/dynamiccookies/gmail-retention-manager/releases/latest).
-2. Replace the entire existing script in Apps Script.
-3. Save the project.
-4. Confirm that the `VERSION` value matches the downloaded release.
-5. Run `enforceGmailRetention()` manually once.
+1. Download the newest `retention-manager.gs`, `admin.html`, and
+   `appsscript.json` files from the
+   [latest release](https://github.com/dynamiccookies/retention-manager-for-gmail/releases/latest).
+2. Replace all three existing files in Apps Script and save the project.
+3. Open **Deploy → Manage deployments** and edit the active web-app deployment.
+4. Select **New version**, then select **Deploy**. Updating the existing
+   deployment preserves its URL.
+5. Refresh Gmail and reopen the sidebar.
 6. Approve any newly requested permissions.
-7. Confirm that the existing scheduled trigger still targets `enforceGmailRetention()`.
+7. Select **Run Now** and confirm the scan succeeds.
 
 The active `GMAIL_RETENTION_CONFIG` Script Property remains separate from the
 replaced source code. Routine updates do not require settings to be reapplied.
 
 ## Contributing
 
-[Issues](https://github.com/dynamiccookies/gmail-retention-manager/issues) and pull requests are welcome. Before submitting a bug report, enable verbose logging and include the relevant execution log with private mailbox information removed.
+[Issues](https://github.com/dynamiccookies/retention-manager-for-gmail/issues) and pull requests are welcome. Before submitting a bug report, enable verbose logging and include the relevant execution log with private mailbox information removed.
 
 ## License
 
-See the repository's [LICENSE](https://github.com/dynamiccookies/gmail-retention-manager/blob/main/LICENSE) file.
+See the repository's [LICENSE](https://github.com/dynamiccookies/retention-manager-for-gmail/blob/main/LICENSE) file.
