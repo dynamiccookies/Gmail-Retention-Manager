@@ -267,6 +267,8 @@ Retention/_System
 ```
 
 The exact names are derived from the configured root and notification suffixes.
+The `_System` label uses red by default. Its color can be changed from Advanced
+settings, or reset to Gmail's default uncolored-label appearance.
 
 When the notification retention period expires:
 
@@ -318,7 +320,7 @@ normal initialized value has this structure:
 
 ```json
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "settings": {
     "VERBOSE_LOGGING": false,
     "ROOT_LABEL": "Retention",
@@ -327,6 +329,7 @@ normal initialized value has this structure:
     "NOTIFICATION_SUBJECT_PREFIX": "[Gmail Retention]",
     "NOTIFICATION_RETENTION_LABEL_SUFFIX": "1d",
     "SYSTEM_NOTIFICATION_LABEL_SUFFIX": "_System",
+    "SYSTEM_NOTIFICATION_LABEL_COLOR": "#cc3a21",
     "CHECK_FOR_UPDATES": true
   }
 }
@@ -350,6 +353,7 @@ is rejected rather than downgraded.
 | `NOTIFICATION_SUBJECT_PREFIX` | `'[Gmail Retention]'` | Prefix used for deletion-summary subjects |
 | `NOTIFICATION_RETENTION_LABEL_SUFFIX` | `'1d'` | Retention policy applied to generated notifications |
 | `SYSTEM_NOTIFICATION_LABEL_SUFFIX` | `'_System'` | Temporary marker used to prevent notification loops |
+| `SYSTEM_NOTIFICATION_LABEL_COLOR` | `'#cc3a21'` | Gmail-supported background color for the temporary system label; blank restores Gmail's default color |
 | `CHECK_FOR_UPDATES` | `true` | Enables GitHub release checks in generated summaries |
 
 ### Internal application constants
