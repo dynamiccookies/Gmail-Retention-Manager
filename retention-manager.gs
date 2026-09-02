@@ -221,6 +221,13 @@ const RETENTION_ADMIN_PAGE_SETUP_HANDLER =
 const RETENTION_ADMIN_PAGE_SETUP_STALE_MS = 10 * 60 * 1000;
 const RETENTION_SIDEBAR_RUN_PROPERTY_KEY =
   'GMAIL_RETENTION_SIDEBAR_RUN_REQUEST';
+const RETENTION_FILTER_CLEANUP_HISTORY_PROPERTY_KEY =
+  'GMAIL_RETENTION_FILTER_CLEANUP_HISTORY';
+const RETENTION_FILTER_CLEANUP_HISTORY_SCHEMA_VERSION = 1;
+const RETENTION_FILTER_CLEANUP_HISTORY_LIMIT = 5;
+const RETENTION_FILTER_CLEANUP_PROPERTY_CHUNK_SIZE = 7500;
+const RETENTION_FILTER_CLEANUP_MAX_FILTERS_PER_MERGE = 25;
+const RETENTION_FILTER_CLEANUP_MAX_QUERY_LENGTH = 1500;
 const RETENTION_ADMIN_PREFERENCES_SCHEMA_VERSION = 1;
 const RETENTION_ADMIN_FACTORY_PREFERENCES = Object.freeze({
   theme: 'dark',
@@ -2335,6 +2342,562 @@ function getRetentionTriggerStatus() {
   };
 }
 
+/** Returns a stable hexadecimal SHA-256 digest for a string. */
+function getRetentionFilterCleanupDigest_(value) {
+  return Utilities.computeDigest(
+    Utilities.DigestAlgorithm.SHA_256,
+    String(value),
+    Utilities.Charset.UTF_8,
+  ).map(byte => (
+    `0${((byte + 256) % 256).toString(16)}`
+  ).slice(-2)).join('');
+}
+
+/** Canonicalizes one Gmail filter action for exact comparison. */
+function canonicalizeRetentionFilterAction_(action) {
+  const source = isConfigurationObject(action) ? action : {};
+  return {
+    addLabelIds: Array.isArray(source.addLabelIds)
+      ? [...source.addLabelIds].map(String).sort()
+      : [],
+    removeLabelIds: Array.isArray(source.removeLabelIds)
+      ? [...source.removeLabelIds].map(String).sort()
+      : [],
+    forward: typeof source.forward === 'string' ? source.forward.trim() : '',
+  };
+}
+
+/** Returns the one supported simple criterion, or null. */
+function getSimpleRetentionFilterCriterion_(criteria) {
+  if (!isConfigurationObject(criteria)) {
+    return null;
+  }
+
+  const meaningful = [];
+  ['from', 'to', 'subject', 'query', 'negatedQuery'].forEach(field => {
+    if (typeof criteria[field] === 'string' && criteria[field].trim()) {
+      meaningful.push({ field, value: criteria[field].trim() });
+    }
+  });
+  if (criteria.hasAttachment === true) {
+    meaningful.push({ field: 'hasAttachment', value: true });
+  }
+  if (criteria.excludeChats === true) {
+    meaningful.push({ field: 'excludeChats', value: true });
+  }
+  if (Number(criteria.size) > 0) {
+    meaningful.push({ field: 'size', value: Number(criteria.size) });
+  }
+  if (
+    typeof criteria.sizeComparison === 'string' &&
+    !['', 'unspecified'].includes(criteria.sizeComparison)
+  ) {
+    meaningful.push({
+      field: 'sizeComparison',
+      value: criteria.sizeComparison,
+    });
+  }
+
+  if (meaningful.length !== 1) {
+    return null;
+  }
+
+  const criterion = meaningful[0];
+  if (criterion.field === 'from' || criterion.field === 'to') {
+    if (
+      criterion.value.length > 320 ||
+      !/^[A-Za-z0-9._%+@-]+$/.test(criterion.value)
+    ) {
+      return null;
+    }
+  } else if (criterion.field === 'subject') {
+    if (
+      criterion.value.length > 200 ||
+      /[\r\n"{}()\\]/.test(criterion.value)
+    ) {
+      return null;
+    }
+  } else {
+    return null;
+  }
+
+  return criterion;
+}
+
+/** Converts one supported criterion to a Gmail search clause. */
+function getRetentionFilterCriterionQuery_(criterion) {
+  if (criterion.field === 'subject') {
+    return `subject:"${criterion.value}"`;
+  }
+  return `${criterion.field}:${criterion.value}`;
+}
+
+/** Builds one OR query from simple criteria. */
+function buildRetentionFilterCombinedQuery_(entries) {
+  return `{${entries.map(entry =>
+    getRetentionFilterCriterionQuery_(entry.criterion),
+  ).join(' ')}}`;
+}
+
+/** Lists all Gmail filters using the Advanced Gmail service. */
+function listRetentionGmailFilters_() {
+  const response = Gmail.Users.Settings.Filters.list('me') || {};
+  return Array.isArray(response.filter) ? response.filter : [];
+}
+
+/** Lists Gmail labels as a map keyed by immutable label ID. */
+function getRetentionGmailLabelNameMap_() {
+  const response = Gmail.Users.Labels.list('me') || {};
+  return new Map((response.labels || []).map(label => [
+    String(label.id),
+    String(label.name || ''),
+  ]));
+}
+
+/** Returns whether a label name is one recognized retention policy. */
+function isRecognizedRetentionPolicyLabelName_(labelName) {
+  const normalized = normalizeRetentionLabelName(labelName);
+  const match = normalized.match(getRetentionLabelPattern());
+  if (!match) {
+    return false;
+  }
+  return Number.isSafeInteger(Number(match[1])) &&
+    Number(match[1]) > 0 &&
+    Boolean(RETENTION_CONFIG.UNIT_ALIASES[match[2].toLowerCase()]);
+}
+
+/** Splits a candidate group into conservative query-sized merge batches. */
+function splitRetentionFilterMergeBatches_(entries) {
+  const batches = [];
+  let current = [];
+
+  entries.forEach(entry => {
+    const proposed = [...current, entry];
+    const exceedsCount = proposed.length >
+      RETENTION_FILTER_CLEANUP_MAX_FILTERS_PER_MERGE;
+    const exceedsQuery = buildRetentionFilterCombinedQuery_(proposed).length >
+      RETENTION_FILTER_CLEANUP_MAX_QUERY_LENGTH;
+
+    if (current.length > 0 && (exceedsCount || exceedsQuery)) {
+      if (current.length >= 2) {
+        batches.push(current);
+      }
+      current = [entry];
+    } else {
+      current = proposed;
+    }
+  });
+
+  if (current.length >= 2) {
+    batches.push(current);
+  }
+  return batches;
+}
+
+/**
+ * Finds only filters that are safe for automatic retention-filter cleanup.
+ * Complex criteria and filters with any additional action are silently ignored.
+ */
+function analyzeRetentionFilterCleanup_() {
+  const filters = listRetentionGmailFilters_();
+  const labelNames = getRetentionGmailLabelNameMap_();
+  const groups = new Map();
+
+  filters.forEach(filter => {
+    const action = canonicalizeRetentionFilterAction_(filter.action);
+    if (
+      action.addLabelIds.length !== 1 ||
+      action.removeLabelIds.length !== 0 ||
+      action.forward
+    ) {
+      return;
+    }
+
+    const labelId = action.addLabelIds[0];
+    const labelName = labelNames.get(labelId) || '';
+    if (!isRecognizedRetentionPolicyLabelName_(labelName)) {
+      return;
+    }
+
+    const criterion = getSimpleRetentionFilterCriterion_(filter.criteria);
+    if (!criterion) {
+      return;
+    }
+
+    const key = `${labelId}\n${criterion.field}`;
+    if (!groups.has(key)) {
+      groups.set(key, { labelId, labelName, field: criterion.field, entries: [] });
+    }
+    groups.get(key).entries.push({
+      filter: {
+        id: String(filter.id),
+        criteria: { ...filter.criteria },
+        action: {
+          addLabelIds: [...action.addLabelIds],
+        },
+      },
+      criterion,
+    });
+  });
+
+  const suggestions = [];
+  groups.forEach(group => {
+    const sortedEntries = group.entries.sort((first, second) =>
+      first.criterion.value.localeCompare(second.criterion.value),
+    );
+    splitRetentionFilterMergeBatches_(sortedEntries).forEach(entries => {
+      const combinedQuery = buildRetentionFilterCombinedQuery_(entries);
+      const fingerprint = JSON.stringify({
+        labelId: group.labelId,
+        field: group.field,
+        filters: entries.map(entry => ({
+          id: entry.filter.id,
+          criteria: entry.filter.criteria,
+          action: entry.filter.action,
+        })),
+        combinedQuery,
+      });
+      suggestions.push({
+        id: getRetentionFilterCleanupDigest_(fingerprint),
+        labelId: group.labelId,
+        labelName: group.labelName,
+        criterionField: group.field,
+        originalCount: entries.length,
+        replacementCount: 1,
+        combinedQuery,
+        criteria: entries.map(entry => ({
+          filterId: entry.filter.id,
+          field: entry.criterion.field,
+          value: entry.criterion.value,
+        })),
+        originalFilters: entries.map(entry => entry.filter),
+      });
+    });
+  });
+
+  suggestions.sort((first, second) =>
+    first.labelName.localeCompare(second.labelName) ||
+    first.criterionField.localeCompare(second.criterionField),
+  );
+  return { totalFilterCount: filters.length, suggestions };
+}
+
+/** Reads a chunked filter-cleanup history from Script Properties. */
+function getRetentionFilterCleanupHistory_() {
+  const properties = PropertiesService.getScriptProperties();
+  const indexText = properties.getProperty(
+    RETENTION_FILTER_CLEANUP_HISTORY_PROPERTY_KEY,
+  );
+  if (!indexText) {
+    return [];
+  }
+
+  try {
+    const index = JSON.parse(indexText);
+    if (
+      !isConfigurationObject(index) ||
+      index.schemaVersion !== RETENTION_FILTER_CLEANUP_HISTORY_SCHEMA_VERSION ||
+      !Number.isInteger(index.chunkCount) ||
+      index.chunkCount < 1
+    ) {
+      throw new Error('Invalid filter-cleanup history index.');
+    }
+    let serialized = '';
+    for (let indexNumber = 0; indexNumber < index.chunkCount; indexNumber += 1) {
+      const chunk = properties.getProperty(
+        `${RETENTION_FILTER_CLEANUP_HISTORY_PROPERTY_KEY}_${indexNumber}`,
+      );
+      if (chunk === null) {
+        throw new Error('A filter-cleanup history chunk is missing.');
+      }
+      serialized += chunk;
+    }
+    const parsed = JSON.parse(serialized);
+    if (
+      !isConfigurationObject(parsed) ||
+      parsed.schemaVersion !== RETENTION_FILTER_CLEANUP_HISTORY_SCHEMA_VERSION ||
+      !Array.isArray(parsed.items)
+    ) {
+      throw new Error('Invalid filter-cleanup history data.');
+    }
+    return parsed.items;
+  } catch (error) {
+    verboseLog('FILTER CLEANUP HISTORY READ FAILURE', String(error));
+    return [];
+  }
+}
+
+/** Writes the bounded filter-cleanup undo history in property-sized chunks. */
+function saveRetentionFilterCleanupHistory_(items) {
+  const properties = PropertiesService.getScriptProperties();
+  const allProperties = properties.getProperties();
+  const serialized = JSON.stringify({
+    schemaVersion: RETENTION_FILTER_CLEANUP_HISTORY_SCHEMA_VERSION,
+    items: items.slice(0, RETENTION_FILTER_CLEANUP_HISTORY_LIMIT),
+  });
+  const chunks = [];
+  for (
+    let offset = 0;
+    offset < serialized.length;
+    offset += RETENTION_FILTER_CLEANUP_PROPERTY_CHUNK_SIZE
+  ) {
+    chunks.push(serialized.slice(
+      offset,
+      offset + RETENTION_FILTER_CLEANUP_PROPERTY_CHUNK_SIZE,
+    ));
+  }
+
+  const updates = {};
+  chunks.forEach((chunk, index) => {
+    updates[`${RETENTION_FILTER_CLEANUP_HISTORY_PROPERTY_KEY}_${index}`] = chunk;
+  });
+  properties.setProperties(updates, false);
+  properties.setProperty(
+    RETENTION_FILTER_CLEANUP_HISTORY_PROPERTY_KEY,
+    JSON.stringify({
+      schemaVersion: RETENTION_FILTER_CLEANUP_HISTORY_SCHEMA_VERSION,
+      chunkCount: chunks.length,
+    }),
+  );
+
+  Object.keys(allProperties)
+    .filter(key => key.startsWith(
+      `${RETENTION_FILTER_CLEANUP_HISTORY_PROPERTY_KEY}_`,
+    ))
+    .filter(key => !Object.prototype.hasOwnProperty.call(updates, key))
+    .forEach(key => properties.deleteProperty(key));
+}
+
+/** Returns public filter-cleanup data for the administration page. */
+function getRetentionFilterCleanupForAdmin_() {
+  const history = getRetentionFilterCleanupHistory_();
+  const latest = history[0] || null;
+  let analysis;
+  let errorMessage = '';
+  try {
+    analysis = analyzeRetentionFilterCleanup_();
+  } catch (error) {
+    analysis = { totalFilterCount: 0, suggestions: [] };
+    errorMessage = error && error.message ? error.message : String(error);
+    verboseLog('FILTER CLEANUP ANALYSIS FAILURE', errorMessage);
+  }
+  return {
+    error: errorMessage,
+    totalFilterCount: analysis.totalFilterCount,
+    suggestions: analysis.suggestions.map(suggestion => ({
+      id: suggestion.id,
+      labelName: suggestion.labelName,
+      criterionField: suggestion.criterionField,
+      originalCount: suggestion.originalCount,
+      replacementCount: suggestion.replacementCount,
+      combinedQuery: suggestion.combinedQuery,
+      criteria: suggestion.criteria,
+    })),
+    undo: latest ? {
+      available: true,
+      mergedAt: latest.mergedAt,
+      labelName: latest.labelName,
+      originalCount: latest.originals.length,
+    } : { available: false },
+  };
+}
+
+/** Canonicalizes criteria while removing server-added empty defaults. */
+function canonicalizeRetentionFilterCriteria_(criteria) {
+  const source = isConfigurationObject(criteria) ? criteria : {};
+  return Object.keys(source).sort().reduce((result, key) => {
+    const value = source[key];
+    const emptyString = typeof value === 'string' && !value.trim();
+    const emptyDefault = value === undefined || value === null ||
+      value === false || emptyString ||
+      (key === 'sizeComparison' && value === 'unspecified') ||
+      (key === 'size' && Number(value) === 0);
+    if (!emptyDefault) {
+      result[key] = value;
+    }
+    return result;
+  }, {});
+}
+
+/** Returns whether two filter resources have the same criteria and action. */
+function retentionFilterResourcesEqual_(first, second) {
+  return JSON.stringify(canonicalizeRetentionFilterCriteria_(first.criteria)) ===
+      JSON.stringify(canonicalizeRetentionFilterCriteria_(second.criteria)) &&
+    JSON.stringify(canonicalizeRetentionFilterAction_(first.action)) ===
+      JSON.stringify(canonicalizeRetentionFilterAction_(second.action));
+}
+
+/** Creates one filter and verifies Gmail stored the requested definition. */
+function createAndVerifyRetentionFilter_(resource) {
+  const created = Gmail.Users.Settings.Filters.create(resource, 'me');
+  if (!created || !created.id) {
+    throw new Error('Gmail did not return the replacement filter ID.');
+  }
+  const stored = Gmail.Users.Settings.Filters.get('me', created.id);
+  if (!retentionFilterResourcesEqual_(resource, stored)) {
+    try {
+      Gmail.Users.Settings.Filters.delete('me', created.id);
+    } catch (cleanupError) {
+      verboseLog('FILTER CLEANUP REPLACEMENT ROLLBACK FAILURE', cleanupError);
+    }
+    throw new Error(
+      'Gmail did not preserve the proposed replacement filter exactly. ' +
+      'The replacement was removed and the original filters were unchanged.',
+    );
+  }
+  return stored;
+}
+
+/**
+ * Creates and verifies a replacement before removing the selected originals.
+ */
+function mergeRetentionFiltersFromAdmin(request) {
+  assertAdminOwnerAccess();
+  if (!isConfigurationObject(request) || typeof request.suggestionId !== 'string') {
+    throw new Error('Select a valid filter-cleanup suggestion.');
+  }
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const analysis = analyzeRetentionFilterCleanup_();
+    const suggestion = analysis.suggestions.find(
+      item => item.id === request.suggestionId,
+    );
+    if (!suggestion) {
+      throw new Error(
+        'That cleanup suggestion is no longer current. Refresh the analysis ' +
+        'and review the filters again.',
+      );
+    }
+
+    const replacementResource = {
+      criteria: { query: suggestion.combinedQuery },
+      action: { addLabelIds: [suggestion.labelId] },
+    };
+    const replacement = createAndVerifyRetentionFilter_(replacementResource);
+    const receipt = {
+      id: Utilities.getUuid(),
+      mergedAt: new Date().toISOString(),
+      labelId: suggestion.labelId,
+      labelName: suggestion.labelName,
+      replacement: {
+        id: String(replacement.id),
+        criteria: { ...replacement.criteria },
+        action: { addLabelIds: [suggestion.labelId] },
+      },
+      originals: suggestion.originalFilters,
+    };
+
+    try {
+      saveRetentionFilterCleanupHistory_([
+        receipt,
+        ...getRetentionFilterCleanupHistory_(),
+      ]);
+    } catch (error) {
+      let rollbackMessage = ' The replacement was removed and the originals ' +
+        'were unchanged.';
+      try {
+        Gmail.Users.Settings.Filters.delete('me', replacement.id);
+      } catch (rollbackError) {
+        rollbackMessage = ' The untracked replacement could not be removed; ' +
+          'review Gmail filters before retrying.';
+        verboseLog('FILTER CLEANUP BACKUP ROLLBACK FAILURE', rollbackError);
+      }
+      throw new Error(
+        `The filter backup could not be saved: ${error.message}.` +
+        rollbackMessage,
+      );
+    }
+
+    const deletionFailures = [];
+    suggestion.originalFilters.forEach(original => {
+      try {
+        Gmail.Users.Settings.Filters.delete('me', original.id);
+      } catch (error) {
+        deletionFailures.push({ id: original.id, message: String(error) });
+      }
+    });
+
+    return {
+      status: deletionFailures.length > 0 ? 'warning' : 'success',
+      message: deletionFailures.length > 0
+        ? 'The replacement was created, but one or more original filters ' +
+          'could not be removed. Use Undo last merge before retrying.'
+        : `${suggestion.originalCount} filters were merged into 1 filter.`,
+      backupExport: {
+        fileType: 'retention-manager-filter-cleanup-backup',
+        schemaVersion: RETENTION_FILTER_CLEANUP_HISTORY_SCHEMA_VERSION,
+        ...receipt,
+      },
+      filterCleanup: getRetentionFilterCleanupForAdmin_(),
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Restores the most recently consolidated group and removes its replacement. */
+function undoLastRetentionFilterMergeFromAdmin() {
+  assertAdminOwnerAccess();
+  const lock = LockService.getScriptLock();
+  lock.waitLock(10000);
+  try {
+    const history = getRetentionFilterCleanupHistory_();
+    const receipt = history[0];
+    if (!receipt) {
+      throw new Error('No filter merge is available to undo.');
+    }
+
+    const currentIds = new Set(listRetentionGmailFilters_().map(filter =>
+      String(filter.id),
+    ));
+    const restoredIds = [];
+    try {
+      receipt.originals.forEach((original, index) => {
+        if (currentIds.has(String(original.id))) {
+          return;
+        }
+        const restored = createAndVerifyRetentionFilter_({
+          criteria: { ...original.criteria },
+          action: { ...original.action },
+        });
+        restoredIds.push(String(restored.id));
+        receipt.originals[index] = {
+          id: String(restored.id),
+          criteria: { ...restored.criteria },
+          action: { ...original.action },
+        };
+        saveRetentionFilterCleanupHistory_(history);
+      });
+    } catch (error) {
+      throw new Error(
+        'Undo could not restore every original filter. The combined filter ' +
+        `was left in place to avoid losing coverage. ${error.message}`,
+      );
+    }
+
+    if (currentIds.has(String(receipt.replacement.id))) {
+      Gmail.Users.Settings.Filters.delete('me', receipt.replacement.id);
+    }
+    saveRetentionFilterCleanupHistory_(history.slice(1));
+
+    return {
+      message: `${receipt.originals.length} original filters were restored.`,
+      restoredFilterIds: restoredIds,
+      filterCleanup: getRetentionFilterCleanupForAdmin_(),
+    };
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Refreshes filter-cleanup suggestions without reloading the admin page. */
+function refreshRetentionFilterCleanupFromAdmin() {
+  assertAdminOwnerAccess();
+  return getRetentionFilterCleanupForAdmin_();
+}
+
 /**
  * Loads all data required to render or refresh the admin page.
  *
@@ -2377,6 +2940,7 @@ function getAdminPageData() {
     adminPreferences: getRetentionAdminPreferences(),
     runtime: getRetentionRuntimeState(),
     trigger,
+    filterCleanup: getRetentionFilterCleanupForAdmin_(),
   };
 }
 
