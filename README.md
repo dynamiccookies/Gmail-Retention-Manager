@@ -1,4 +1,4 @@
-# Retention Manager for Gmail™
+# <img src="icons/retention-manager-icon-128.png" alt="Retention Manager for Gmail icon" width="48" height="48" align="absmiddle"> Retention Manager for Gmail™
 
 [![GitHub License](https://img.shields.io/github/license/dynamiccookies/retention-manager-for-gmail?style=for-the-badge)](https://github.com/dynamiccookies/retention-manager-for-gmail/blob/main/LICENSE)
 [![GitHub File Size](https://img.shields.io/github/size/dynamiccookies/retention-manager-for-gmail/retention-manager.gs?style=for-the-badge)](https://github.com/dynamiccookies/retention-manager-for-gmail/blob/main/retention-manager.gs)
@@ -33,8 +33,10 @@ Gmail filters decide **which conversations receive a retention policy**. This Go
 - Private HTML administration page for advanced configuration, backups, logging,
   and diagnostics
 - Managed time-driven schedules that can be created or changed from Gmail
+- Contacts-style cleanup suggestions for simple, redundant retention filters
 - Fail-closed Gmail metadata preflight before retention changes begin
-- Narrow `gmail.modify` authorization through the Advanced Gmail service
+- Narrow Gmail API authorization through `gmail.modify`, with
+  `gmail.settings.basic` used only for explicit filter cleanup
 - Verbose diagnostic logging for installation and troubleshooting
 - Script locking and batch processing to reduce duplicate or overlapping work
 
@@ -163,6 +165,20 @@ from:example.com
 
 To change the policy later, edit the Gmail filter and select a different retention label. The script does not need to be modified.
 
+### Consolidate redundant retention filters
+
+Advanced Settings includes a **Filter cleanup** panel. It suggests a merge only
+when two or more Gmail filters apply the same valid retention-policy label, have
+no other action, and each uses one simple sender, recipient, or subject
+criterion. Complex filters and filters that archive, mark read, forward, remove
+labels, or perform any other action are left unchanged.
+
+Reviewing a suggestion shows every original criterion and the proposed combined
+Gmail `OR` query. When **Merge filters** is selected, the application creates
+and verifies the replacement before deleting any original. It stores a bounded
+undo record and downloads a JSON backup of the original definitions. **Undo
+last merge** recreates the originals before removing the combined replacement.
+
 ## Supported Retention Labels
 
 The default root label is `Retention`. The number must be a positive integer. Spaces between the number and unit are optional, and matching is case-insensitive.
@@ -243,7 +259,7 @@ When ordinary messages are moved to Trash, the script sends a notification to th
 Example subject:
 
 ```text
-[Gmail Retention] 12 messages deleted
+[Retention Manager] 12 messages deleted
 ```
 
 The HTML notification includes:
@@ -267,7 +283,7 @@ Retention/_System
 ```
 
 The exact names are derived from the configured root and notification suffixes.
-The `_System` label uses red by default. Its color can be changed from Advanced
+The `_System` label uses red by default. Its color can be changed from Label
 settings, or reset to Gmail's default uncolored-label appearance.
 
 When the notification retention period expires:
@@ -320,13 +336,13 @@ normal initialized value has this structure:
 
 ```json
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "settings": {
     "VERBOSE_LOGGING": false,
     "ROOT_LABEL": "Retention",
     "ARCHIVE_ON_LABEL": false,
     "DEFAULT_RETENTION_LABEL_SUFFIXES": ["7d", "1m"],
-    "NOTIFICATION_SUBJECT_PREFIX": "[Gmail Retention]",
+    "NOTIFICATION_SUBJECT_PREFIX": "[Retention Manager]",
     "NOTIFICATION_RETENTION_LABEL_SUFFIX": "1d",
     "SYSTEM_NOTIFICATION_LABEL_SUFFIX": "_System",
     "SYSTEM_NOTIFICATION_LABEL_COLOR": "#cc3a21",
@@ -350,7 +366,7 @@ is rejected rather than downgraded.
 | `ROOT_LABEL` | `'Retention'` | Parent label used for all managed retention policies |
 | `ARCHIVE_ON_LABEL` | `false` | Removes the Inbox label from directly retention-labeled messages that have not expired |
 | `DEFAULT_RETENTION_LABEL_SUFFIXES` | `['7d', '1m']` | Starter child labels created only when the root label is absent |
-| `NOTIFICATION_SUBJECT_PREFIX` | `'[Gmail Retention]'` | Prefix used for deletion-summary subjects |
+| `NOTIFICATION_SUBJECT_PREFIX` | `'[Retention Manager]'` | Prefix used for deletion-summary subjects |
 | `NOTIFICATION_RETENTION_LABEL_SUFFIX` | `'1d'` | Retention policy applied to generated notifications |
 | `SYSTEM_NOTIFICATION_LABEL_SUFFIX` | `'_System'` | Temporary marker used to prevent notification loops |
 | `SYSTEM_NOTIFICATION_LABEL_COLOR` | `'#cc3a21'` | Gmail-supported background color for the temporary system label; blank restores Gmail's default color |
@@ -480,6 +496,7 @@ The script requires access necessary to:
 - Read Gmail labels, conversations, and message metadata
 - Add and remove Gmail labels
 - Move messages or conversations to Trash or Inbox
+- Review, create, and remove Gmail filters when the user explicitly runs Filter cleanup
 - Create and send deletion-summary emails to the same account
 - Contact the public GitHub Releases API when update checks are enabled
 - Use Apps Script cache and locking services

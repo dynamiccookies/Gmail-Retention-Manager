@@ -14,6 +14,7 @@
   "oauthScopes": [
     "https://www.googleapis.com/auth/gmail.addons.execute",
     "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/gmail.settings.basic",
     "https://www.googleapis.com/auth/script.scriptapp",
     "https://www.googleapis.com/auth/script.external_request",
     "https://www.googleapis.com/auth/userinfo.email"
@@ -24,7 +25,7 @@
   "addOns": {
     "common": {
       "name": "Retention Manager for Gmail™",
-      "logoUrl": "https://fonts.gstatic.com/s/i/googlematerialicons/schedule/v6/black-24dp/1x/gm_schedule_black_24dp.png",
+      "logoUrl": "https://raw.githubusercontent.com/dynamiccookies/Retention-Manager-for-Gmail/a30f3169e228a112bac31ef6a908d178dba588f9/icons/retention-manager-icon-128.png",
       "openLinkUrlPrefixes": [
         "https://script.google.com/macros/s/",
         "https://github.com/dynamiccookies/retention-manager-for-gmail/"
