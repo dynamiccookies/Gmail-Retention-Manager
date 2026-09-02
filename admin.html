@@ -144,6 +144,18 @@
         margin-bottom: 22px;
       }
 
+      .brand-heading {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+      }
+
+      .brand-icon {
+        width: 52px;
+        height: 52px;
+        flex: 0 0 auto;
+      }
+
       .topbar-actions {
         display: flex;
         align-items: center;
@@ -324,21 +336,20 @@
         font-size: 13px;
       }
 
+      .status-card-action {
+        margin-top: 14px;
+      }
+
+      .status-card-action .button {
+        width: 100%;
+      }
+
+      .status-card-action .help {
+        margin-top: 7px;
+      }
+
       .schedule-detail-line {
         display: block;
-      }
-
-      .run-panel {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        gap: 18px;
-        margin-bottom: 18px;
-        padding: 20px;
-      }
-
-      .run-panel p {
-        margin-bottom: 0;
       }
 
       .panel {
@@ -346,7 +357,7 @@
         overflow: hidden;
       }
 
-      #advancedSettingsPanel[open] {
+      #systemSettingsPanel[open] {
         position: relative;
         z-index: 5;
         overflow: visible;
@@ -415,6 +426,10 @@
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 20px;
+      }
+
+      .schedule-field-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
       }
 
       .field-full {
@@ -1035,9 +1050,6 @@
       }
 
       .actions {
-        position: sticky;
-        bottom: 0;
-        z-index: 2;
         display: flex;
         align-items: center;
         justify-content: flex-end;
@@ -1247,7 +1259,6 @@
         }
 
         .topbar,
-        .run-panel,
         .update-available-notice {
           align-items: stretch;
           flex-direction: column;
@@ -1258,7 +1269,8 @@
         }
 
         .dashboard-grid,
-        .form-grid {
+        .form-grid,
+        .schedule-field-grid {
           grid-template-columns: 1fr;
         }
 
@@ -1488,10 +1500,19 @@
 
     <main class="shell" id="app" hidden>
       <header class="topbar">
-        <div>
-          <p class="eyebrow">Private administration</p>
-          <h1>Retention Manager for Gmail™</h1>
-          <p class="subtitle" id="ownerText"></p>
+        <div class="brand-heading">
+          <img
+            class="brand-icon"
+            src="https://raw.githubusercontent.com/dynamiccookies/Retention-Manager-for-Gmail/a30f3169e228a112bac31ef6a908d178dba588f9/icons/retention-manager-icon-128.png"
+            alt=""
+            width="52"
+            height="52"
+          >
+          <div>
+            <p class="eyebrow">Private administration</p>
+            <h1>Retention Manager for Gmail™</h1>
+            <p class="subtitle" id="ownerText"></p>
+          </div>
         </div>
         <div class="topbar-actions">
           <a class="version-pill" id="versionPill" href="#" target="_blank" rel="noopener"></a>
@@ -1540,6 +1561,14 @@
           <p class="card-label">Status</p>
           <div id="statusPill"></div>
           <p class="card-detail" id="statusDetail"></p>
+          <div class="status-card-action">
+            <button class="button button-primary" id="runButton" type="button">
+              Run retention scan
+            </button>
+            <p class="help" id="runHelp">
+              Immediately process eligible messages using the saved settings.
+            </p>
+          </div>
         </article>
 
         <article class="card">
@@ -1559,18 +1588,6 @@
           <p class="card-value" id="lastErrorValue"></p>
           <p class="card-detail" id="lastErrorDetail"></p>
         </article>
-      </section>
-
-      <section class="panel run-panel">
-        <div>
-          <h2>Run a retention scan</h2>
-          <p class="subtitle" id="runHelp">
-            Immediately process all eligible messages using the saved settings.
-          </p>
-        </div>
-        <button class="button button-primary" id="runButton" type="button">
-          Run retention scan now
-        </button>
       </section>
 
       <details class="panel collapsible-panel" id="scheduleSettingsPanel">
@@ -1599,7 +1616,7 @@
               </label>
             </div>
 
-            <div class="form-grid" style="margin-top:18px;">
+            <div class="form-grid schedule-field-grid" style="margin-top:18px;">
               <div class="field">
                 <label for="scheduleFrequency">Scan frequency</label>
                 <select id="scheduleFrequency" name="scheduleFrequency"></select>
@@ -1625,7 +1642,7 @@
                 <p class="field-error" id="scheduleDailyTimeError"></p>
               </div>
 
-              <div class="field field-full" id="scheduleTimeZoneField">
+              <div class="field" id="scheduleTimeZoneField">
                 <label for="scheduleTimeZone">Time zone</label>
                 <select
                   id="scheduleTimeZone"
@@ -1694,11 +1711,11 @@
       </details>
 
       <form id="settingsForm" novalidate>
-        <details class="panel collapsible-panel" id="retentionSettingsPanel">
+        <details class="panel collapsible-panel" id="labelSettingsPanel">
           <summary class="panel-header">
             <div>
-              <h2>Retention settings</h2>
-              <p>Control the Gmail labels recognized by the retention process.</p>
+              <h2>Label settings</h2>
+              <p>Control the labels recognized by the retention process.</p>
             </div>
           </summary>
 
@@ -1710,7 +1727,7 @@
                   <input id="rootLabel" name="rootLabel" type="text" autocomplete="off">
                   <span class="composite-suffix" aria-hidden="true">
                     <span class="composite-example-label">Example</span>
-                    <span class="composite-example-value">/1m</span>
+                    <span class="composite-example-value" id="rootLabelExample">Retention/1m</span>
                   </span>
                 </div>
                 <p class="help">
@@ -1734,107 +1751,6 @@
                 </p>
                 <p class="field-error" id="starterLabelsError"></p>
               </div>
-            </div>
-
-            <div class="switch-row archive-setting-row">
-              <div class="switch-copy">
-                <label class="switch-label" for="archiveOnLabel">
-                  Archive retention-labeled messages
-                </label>
-                <p class="help">
-                  Disabled by default. When enabled, the next scan removes only
-                  directly retention-labeled messages from Inbox. Their Trash
-                  deadline does not change, unrelated messages in the same
-                  conversation remain in Inbox, and generated notification
-                  emails are excluded. Turning this off does not return archived
-                  messages.
-                </p>
-              </div>
-              <label class="switch" aria-label="Archive retention-labeled messages">
-                <input id="archiveOnLabel" type="checkbox">
-                <span class="switch-track"></span>
-              </label>
-            </div>
-          </div>
-        </details>
-
-        <details class="panel collapsible-panel" id="notificationEmailSettingsPanel">
-          <summary class="panel-header">
-            <div>
-              <h2>Email notification settings</h2>
-              <p>Control deletion-summary and update-only notification emails.</p>
-            </div>
-          </summary>
-
-          <div class="panel-body">
-            <div class="form-grid">
-              <div class="field">
-                <label for="subjectPrefix">Notification email subject prefix</label>
-                <div class="composite-input">
-                  <input id="subjectPrefix" name="subjectPrefix" type="text" autocomplete="off">
-                  <span class="composite-suffix" aria-hidden="true">
-                    <span class="composite-example-label">Example</span>
-                    <span class="composite-example-value">3 messages deleted</span>
-                  </span>
-                </div>
-                <p class="help">
-                  Edit only the prefix. It applies to deletion summaries and
-                  update-only notices; the shaded text is example summary data.
-                </p>
-                <p class="field-error" id="subjectPrefixError"></p>
-              </div>
-
-              <div class="field">
-                <label for="notificationRetention">Notification email retention period</label>
-                <input id="notificationRetention" name="notificationRetention" type="text" autocomplete="off">
-                <p class="help">
-                  Controls how long generated deletion summaries and update-only
-                  notices remain before becoming eligible to move to Trash.
-                </p>
-                <p class="field-error" id="notificationRetentionError"></p>
-              </div>
-
-            </div>
-          </div>
-        </details>
-
-        <details class="panel collapsible-panel" id="advancedSettingsPanel">
-          <summary class="panel-header">
-            <div>
-              <h2>Advanced settings</h2>
-              <p>Diagnostic and internal options that normally should not be changed.</p>
-            </div>
-          </summary>
-
-          <div class="panel-body">
-            <div class="switch-row">
-              <div class="switch-copy">
-                <label class="switch-label" for="checkForUpdates">Check for updates</label>
-                <p class="help">
-                  Check the latest published GitHub release during every scan
-                  and on the admin page.
-                </p>
-              </div>
-              <label class="switch" aria-label="Check for updates">
-                <input id="checkForUpdates" type="checkbox">
-                <span class="switch-track"></span>
-              </label>
-            </div>
-
-            <div class="switch-row">
-              <div class="switch-copy">
-                <label class="switch-label" for="verboseLogging">Verbose logging</label>
-                <p class="help">
-                  Records detailed mailbox-processing decisions for troubleshooting.
-                  This can increase execution time and log volume, and logs may
-                  contain message subjects, label names, thread IDs, and other
-                  mailbox metadata. Do not leave this enabled long-term.
-                </p>
-              </div>
-              <label class="switch" aria-label="Verbose logging">
-                <input id="verboseLogging" type="checkbox">
-                <span class="switch-track"></span>
-              </label>
             </div>
 
             <div class="field" style="margin-top:18px;">
@@ -1887,6 +1803,108 @@
                 </label>
               </div>
             </div>
+
+            <div class="switch-row archive-setting-row">
+              <div class="switch-copy">
+                <label class="switch-label" for="archiveOnLabel">
+                  Archive retention-labeled messages
+                </label>
+                <p class="help">
+                  Disabled by default. When enabled, the next scan removes only
+                  directly retention-labeled messages from Inbox. Their Trash
+                  deadline does not change, unrelated messages in the same
+                  conversation remain in Inbox, and generated notification
+                  emails are excluded. Turning this off does not return archived
+                  messages.
+                </p>
+              </div>
+              <label class="switch" aria-label="Archive retention-labeled messages">
+                <input id="archiveOnLabel" type="checkbox">
+                <span class="switch-track"></span>
+              </label>
+            </div>
+          </div>
+        </details>
+
+        <details class="panel collapsible-panel" id="notificationEmailSettingsPanel">
+          <summary class="panel-header">
+            <div>
+              <h2>Email notification settings</h2>
+              <p>Control deletion-summary and update-only notification emails.</p>
+            </div>
+          </summary>
+
+          <div class="panel-body">
+            <div class="form-grid">
+              <div class="field">
+                <label for="subjectPrefix">Notification email subject prefix</label>
+                <div class="composite-input">
+                  <input id="subjectPrefix" name="subjectPrefix" type="text" autocomplete="off">
+                  <span class="composite-suffix" aria-hidden="true">
+                    <span class="composite-example-label">Example</span>
+                    <span class="composite-example-value" id="subjectPrefixExample">[Retention Manager] 3 messages deleted</span>
+                  </span>
+                </div>
+                <p class="help">
+                  Edit only the prefix. It applies to deletion summaries and
+                  update-only notices; the shaded text is example summary data.
+                </p>
+                <p class="field-error" id="subjectPrefixError"></p>
+              </div>
+
+              <div class="field">
+                <label for="notificationRetention">Notification email retention period</label>
+                <input id="notificationRetention" name="notificationRetention" type="text" autocomplete="off">
+                <p class="help">
+                  Controls how long generated deletion summaries and update-only
+                  notices remain before becoming eligible to move to Trash.
+                </p>
+                <p class="field-error" id="notificationRetentionError"></p>
+              </div>
+
+            </div>
+          </div>
+        </details>
+
+        <details class="panel collapsible-panel" id="systemSettingsPanel">
+          <summary class="panel-header">
+            <div>
+              <h2>System settings</h2>
+              <p>Diagnostic and internal options.</p>
+            </div>
+          </summary>
+
+          <div class="panel-body">
+            <div class="switch-row">
+              <div class="switch-copy">
+                <label class="switch-label" for="checkForUpdates">Check for updates</label>
+                <p class="help">
+                  Check the latest published GitHub release during every scan
+                  and on the admin page.
+                </p>
+              </div>
+              <label class="switch" aria-label="Check for updates">
+                <input id="checkForUpdates" type="checkbox">
+                <span class="switch-track"></span>
+              </label>
+            </div>
+
+            <div class="switch-row">
+              <div class="switch-copy">
+                <label class="switch-label" for="verboseLogging">Verbose logging</label>
+                <p class="help">
+                  Records detailed mailbox-processing decisions for troubleshooting.
+                  This can increase execution time and log volume, and logs may
+                  contain message subjects, label names, thread IDs, and other
+                  mailbox metadata. Do not leave this enabled long-term.
+                </p>
+              </div>
+              <label class="switch" aria-label="Verbose logging">
+                <input id="verboseLogging" type="checkbox">
+                <span class="switch-track"></span>
+              </label>
+            </div>
+
           </div>
         </details>
 
@@ -1976,7 +1994,7 @@
         </div>
       </details>
 
-      <div class="actions">
+      <div class="actions" id="settingsActions">
         <span class="unsaved" id="unsavedText" hidden>Unsaved changes</span>
         <button class="button button-secondary" id="discardButton" type="button" disabled>
           Discard
@@ -2068,10 +2086,13 @@
           'scheduleResetButton', 'scheduleRepairButton', 'scheduleSaveButton',
           'lastSuccessValue', 'lastSuccessDetail', 'lastErrorValue',
           'lastErrorDetail', 'runButton', 'runHelp', 'settingsForm',
-          'rootLabel', 'rootLabelError', 'rootLabelWarning',
+          'notificationEmailSettingsPanel', 'labelSettingsPanel',
+          'systemSettingsPanel', 'settingsActions',
+          'rootLabel', 'rootLabelExample', 'rootLabelError', 'rootLabelWarning',
           'starterLabels', 'starterLabelsError',
           'archiveOnLabel',
-          'subjectPrefix', 'subjectPrefixError', 'notificationRetention',
+          'subjectPrefix', 'subjectPrefixExample', 'subjectPrefixError',
+          'notificationRetention',
           'notificationRetentionError', 'checkForUpdates', 'verboseLogging',
           'systemLabel', 'systemLabelColor', 'systemLabelColorButton',
           'systemLabelColorName', 'systemLabelColorPalette',
@@ -2090,6 +2111,8 @@
         ].forEach(id => {
           elements[id] = document.getElementById(id);
         });
+
+        arrangeSettingsPanels();
 
         elements.themeToggle.addEventListener('change', queueThemePreferenceSave);
         elements.retryButton.addEventListener('click', loadAdminPage);
@@ -2159,8 +2182,10 @@
         elements.scheduleRepairButton.addEventListener('click', repairSchedule);
         elements.discardButton.addEventListener('click', discardChanges);
         elements.settingsForm.addEventListener('submit', saveSettings);
-        elements.settingsForm.addEventListener('input', handleFormChange);
-        elements.settingsForm.addEventListener('change', handleFormChange);
+        getSettingsPanels().forEach(panel => {
+          panel.addEventListener('input', handleFormChange);
+          panel.addEventListener('change', handleFormChange);
+        });
         elements.systemLabelColorButton.addEventListener(
           'click',
           toggleSystemLabelColorPalette,
@@ -2343,7 +2368,44 @@
           applicationData ? applicationData.availableUpdate : null,
           settings.CHECK_FOR_UPDATES,
         );
+        updateSettingExamples();
         clearValidationErrors();
+      }
+
+      function getSettingsPanels() {
+        return [
+          elements.notificationEmailSettingsPanel,
+          elements.labelSettingsPanel,
+          elements.systemSettingsPanel,
+        ];
+      }
+
+      function arrangeSettingsPanels() {
+        getSettingsPanels().forEach(panel => {
+          panel.querySelectorAll('input, select, textarea').forEach(control => {
+            control.setAttribute('form', 'settingsForm');
+          });
+        });
+
+        [
+          elements.notificationEmailSettingsPanel,
+          elements.filterCleanupPanel,
+          elements.labelSettingsPanel,
+          elements.scheduleSettingsPanel,
+          elements.settingsBackupsPanel,
+          elements.systemSettingsPanel,
+        ].forEach(panel => {
+          elements.settingsActions.before(panel);
+        });
+      }
+
+      function updateSettingExamples() {
+        const rootLabel = elements.rootLabel.value.trim() || 'Retention';
+        const subjectPrefix = elements.subjectPrefix.value.trim();
+        elements.rootLabelExample.textContent = `${rootLabel}/1m`;
+        elements.subjectPrefixExample.textContent = subjectPrefix
+          ? `${subjectPrefix} 3 messages deleted`
+          : '3 messages deleted';
       }
 
       function populateSystemLabelColorOptions(options) {
@@ -3777,6 +3839,7 @@
       }
 
       function handleFormChange() {
+        updateSettingExamples();
         updateWarnings();
         validateForm(false);
         updateDirtyState();
@@ -4178,7 +4241,6 @@
       function beginConfirmedRetentionScan() {
         setBusy(true, 'Scanning…');
         showScanProgress();
-        showNotice('Retention scan is running. Keep this page open.', 'warning');
         google.script.run
           .withSuccessHandler(response => {
             renderRuntime(response.runtime);
@@ -4251,7 +4313,9 @@
       }
 
       function focusFirstInvalidField() {
-        const invalid = elements.settingsForm.querySelector('[aria-invalid="true"]');
+        const invalid = document.querySelector(
+          '[form="settingsForm"][aria-invalid="true"]',
+        );
         if (invalid) {
           const containingPanel = invalid.closest('details');
           if (containingPanel) {
@@ -4271,7 +4335,7 @@
           : 'Save changes';
         elements.runButton.textContent = isBusy && actionText === 'Scanning…'
           ? actionText
-          : 'Run retention scan now';
+          : 'Run retention scan';
         updateDirtyState();
         updateScheduleDirtyState();
       }

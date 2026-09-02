@@ -161,8 +161,8 @@ const RETENTION_FACTORY_DEFAULTS = Object.freeze({
   // Child-label values created only when ROOT_LABEL does not exist at all.
   DEFAULT_RETENTION_LABEL_SUFFIXES: Object.freeze(['7d', '1m']),
 
-  // Notification subject format: "[Gmail Retention] 3 messages deleted".
-  NOTIFICATION_SUBJECT_PREFIX: '[Gmail Retention]',
+  // Notification subject format: "[Retention Manager] 3 messages deleted".
+  NOTIFICATION_SUBJECT_PREFIX: '[Retention Manager]',
 
   // Child-label value applied to system emails before silent Trash cleanup.
   // Any supported retention expression can be used, such as '12h' or '7 days'.
@@ -185,7 +185,7 @@ const RETENTION_FACTORY_DEFAULTS = Object.freeze({
  * settings migrations without tying them to a particular software release.
  */
 const RETENTION_SETTINGS_PROPERTY_KEY = 'GMAIL_RETENTION_CONFIG';
-const RETENTION_SETTINGS_SCHEMA_VERSION = 3;
+const RETENTION_SETTINGS_SCHEMA_VERSION = 4;
 const RETENTION_SETTINGS_BACKUPS_PROPERTY_KEY =
   'GMAIL_RETENTION_CONFIG_BACKUPS';
 const RETENTION_SETTINGS_BACKUP_STORE_SCHEMA_VERSION = 1;
@@ -1074,6 +1074,23 @@ function migrateRetentionConfiguration(storedConfiguration) {
           },
         };
         schemaVersion = 3;
+        migrated = true;
+        break;
+      }
+      case 3: {
+        const previousDefaultPrefix = '[Gmail Retention]';
+        configuration = {
+          schemaVersion: 4,
+          settings: {
+            ...configuration.settings,
+            NOTIFICATION_SUBJECT_PREFIX:
+              configuration.settings.NOTIFICATION_SUBJECT_PREFIX ===
+                previousDefaultPrefix
+                ? RETENTION_FACTORY_DEFAULTS.NOTIFICATION_SUBJECT_PREFIX
+                : configuration.settings.NOTIFICATION_SUBJECT_PREFIX,
+          },
+        };
+        schemaVersion = 4;
         migrated = true;
         break;
       }
@@ -6727,7 +6744,7 @@ function buildHtmlAdminPageLink(adminPageUrl) {
   return `
     <p style="margin:16px 0 0;">
       <a href="${escapeHtml(adminPageUrl)}" style="font-weight:700;">
-        Manage ${escapeHtml(RETENTION_CONFIG.APPLICATION_NAME)} settings
+        Advanced Settings
       </a>
     </p>`;
 }
@@ -6816,7 +6833,7 @@ function buildHtmlSummary(
   return `
     <div style="font-family:Arial,sans-serif;font-size:14px;color:#202124;">
       <h2 style="margin:0 0 12px;">
-        ${escapeHtml(RETENTION_CONFIG.APPLICATION_NAME)} Summary
+        Deletion Summary
       </h2>
       <p style="margin:0 0 12px;">
         The retention run completed at ${escapeHtml(formattedRunDate)} and moved
@@ -6838,7 +6855,7 @@ function buildHtmlSummary(
         <tbody>${rows}</tbody>
       </table>
       <p style="margin:16px 0 0;color:#5f6368;font-size:12px;">
-        This notification is automatically labeled
+        This notification is labeled
         ${escapeHtml(getNotificationRetentionLabelName())} and will be
         moved to Trash silently when its retention period expires.
       </p>
@@ -6882,7 +6899,7 @@ function buildPlainTextSummary(
     : '';
 
   const lines = [
-    `${RETENTION_CONFIG.APPLICATION_NAME} Summary`,
+    'Deletion Summary',
     '',
     `Run completed: ${formattedRunDate}`,
     `Messages moved to Trash: ${totalRecordCount}.${partText}`,
@@ -6910,7 +6927,7 @@ function buildPlainTextSummary(
   }
 
   lines.push(
-    `This notification has ${getNotificationRetentionLabelName()} ` +
+    `This notification is labeled ${getNotificationRetentionLabelName()} ` +
     'and will be moved to Trash silently when its retention period expires.',
   );
   if (availableUpdate) {
@@ -6924,7 +6941,7 @@ function buildPlainTextSummary(
   lines.push(...getPlainTextVerboseLoggingWarningLines());
   lines.push('');
   if (adminPageUrl) {
-    lines.push(`Manage ${RETENTION_CONFIG.APPLICATION_NAME} settings: ${adminPageUrl}`);
+    lines.push(`Advanced Settings: ${adminPageUrl}`);
   } else {
     lines.push(
       'Admin page: unavailable until this Apps Script project is deployed as ' +
@@ -6979,7 +6996,7 @@ function buildHtmlUpdateNotification(
         summaries will continue displaying the update until it is installed.
       </p>
       <p style="margin:8px 0 0;color:#5f6368;font-size:12px;">
-        This notification is automatically labeled
+        This notification is labeled
         ${escapeHtml(getNotificationRetentionLabelName())} and will be moved to
         Trash silently when its retention period expires.
       </p>
@@ -7020,14 +7037,14 @@ function buildPlainTextUpdateNotification(
     'This update-only notice is sent once for each newer release. Deletion ' +
       'summaries will continue displaying the update until it is installed.',
     '',
-    `This notification has ${getNotificationRetentionLabelName()} and will be ` +
+    `This notification is labeled ${getNotificationRetentionLabelName()} and will be ` +
       'moved to Trash silently when its retention period expires.',
     ...getPlainTextVerboseLoggingWarningLines(),
     '',
   ];
 
   if (adminPageUrl) {
-    lines.push(`Manage ${RETENTION_CONFIG.APPLICATION_NAME} settings: ${adminPageUrl}`);
+    lines.push(`Advanced Settings: ${adminPageUrl}`);
   } else {
     lines.push(
       'Admin page: unavailable until this Apps Script project is deployed as ' +

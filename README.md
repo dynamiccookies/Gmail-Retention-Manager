@@ -259,7 +259,7 @@ When ordinary messages are moved to Trash, the script sends a notification to th
 Example subject:
 
 ```text
-[Gmail Retention] 12 messages deleted
+[Retention Manager] 12 messages deleted
 ```
 
 The HTML notification includes:
@@ -336,13 +336,13 @@ normal initialized value has this structure:
 
 ```json
 {
-  "schemaVersion": 3,
+  "schemaVersion": 4,
   "settings": {
     "VERBOSE_LOGGING": false,
     "ROOT_LABEL": "Retention",
     "ARCHIVE_ON_LABEL": false,
     "DEFAULT_RETENTION_LABEL_SUFFIXES": ["7d", "1m"],
-    "NOTIFICATION_SUBJECT_PREFIX": "[Gmail Retention]",
+    "NOTIFICATION_SUBJECT_PREFIX": "[Retention Manager]",
     "NOTIFICATION_RETENTION_LABEL_SUFFIX": "1d",
     "SYSTEM_NOTIFICATION_LABEL_SUFFIX": "_System",
     "SYSTEM_NOTIFICATION_LABEL_COLOR": "#cc3a21",
@@ -366,7 +366,7 @@ is rejected rather than downgraded.
 | `ROOT_LABEL` | `'Retention'` | Parent label used for all managed retention policies |
 | `ARCHIVE_ON_LABEL` | `false` | Removes the Inbox label from directly retention-labeled messages that have not expired |
 | `DEFAULT_RETENTION_LABEL_SUFFIXES` | `['7d', '1m']` | Starter child labels created only when the root label is absent |
-| `NOTIFICATION_SUBJECT_PREFIX` | `'[Gmail Retention]'` | Prefix used for deletion-summary subjects |
+| `NOTIFICATION_SUBJECT_PREFIX` | `'[Retention Manager]'` | Prefix used for deletion-summary subjects |
 | `NOTIFICATION_RETENTION_LABEL_SUFFIX` | `'1d'` | Retention policy applied to generated notifications |
 | `SYSTEM_NOTIFICATION_LABEL_SUFFIX` | `'_System'` | Temporary marker used to prevent notification loops |
 | `SYSTEM_NOTIFICATION_LABEL_COLOR` | `'#cc3a21'` | Gmail-supported background color for the temporary system label; blank restores Gmail's default color |
