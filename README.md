@@ -1,4 +1,4 @@
-# Retention Manager for Gmail™
+# <img src="icons/retention-manager-icon-128.png" alt="Retention Manager for Gmail icon" width="48" height="48" align="absmiddle"> Retention Manager for Gmail™
 
 [![GitHub License](https://img.shields.io/github/license/dynamiccookies/retention-manager-for-gmail?style=for-the-badge)](https://github.com/dynamiccookies/retention-manager-for-gmail/blob/main/LICENSE)
 [![GitHub File Size](https://img.shields.io/github/size/dynamiccookies/retention-manager-for-gmail/retention-manager.gs?style=for-the-badge)](https://github.com/dynamiccookies/retention-manager-for-gmail/blob/main/retention-manager.gs)
