@@ -434,7 +434,7 @@ function createGmailApiLabel_(resource) {
       return thread;
     },
     deleteLabel: () => {
-      Gmail.Users.Labels.delete('me', resource.id);
+      Gmail.Users.Labels.remove('me', resource.id);
       invalidateGmailApiCaches_();
     },
   };
@@ -2445,6 +2445,11 @@ function listRetentionGmailFilters_() {
   return Array.isArray(response.filter) ? response.filter : [];
 }
 
+/** Deletes a Gmail filter through the Advanced service's REST-delete alias. */
+function removeRetentionGmailFilter_(filterId) {
+  return Gmail.Users.Settings.Filters.remove('me', String(filterId));
+}
+
 /** Lists Gmail labels as a map keyed by immutable label ID. */
 function getRetentionGmailLabelNameMap_() {
   const response = Gmail.Users.Labels.list('me') || {};
@@ -2736,7 +2741,7 @@ function createAndVerifyRetentionFilter_(resource) {
   const stored = Gmail.Users.Settings.Filters.get('me', created.id);
   if (!retentionFilterResourcesEqual_(resource, stored)) {
     try {
-      Gmail.Users.Settings.Filters.delete('me', created.id);
+      removeRetentionGmailFilter_(created.id);
     } catch (cleanupError) {
       verboseLog('FILTER CLEANUP REPLACEMENT ROLLBACK FAILURE', cleanupError);
     }
@@ -2798,7 +2803,7 @@ function mergeRetentionFiltersFromAdmin(request) {
       let rollbackMessage = ' The replacement was removed and the originals ' +
         'were unchanged.';
       try {
-        Gmail.Users.Settings.Filters.delete('me', replacement.id);
+        removeRetentionGmailFilter_(replacement.id);
       } catch (rollbackError) {
         rollbackMessage = ' The untracked replacement could not be removed; ' +
           'review Gmail filters before retrying.';
@@ -2813,7 +2818,7 @@ function mergeRetentionFiltersFromAdmin(request) {
     const deletionFailures = [];
     suggestion.originalFilters.forEach(original => {
       try {
-        Gmail.Users.Settings.Filters.delete('me', original.id);
+        removeRetentionGmailFilter_(original.id);
       } catch (error) {
         deletionFailures.push({ id: original.id, message: String(error) });
       }
@@ -2878,7 +2883,7 @@ function undoLastRetentionFilterMergeFromAdmin() {
     }
 
     if (currentIds.has(String(receipt.replacement.id))) {
-      Gmail.Users.Settings.Filters.delete('me', receipt.replacement.id);
+      removeRetentionGmailFilter_(receipt.replacement.id);
     }
     saveRetentionFilterCleanupHistory_(history.slice(1));
 
