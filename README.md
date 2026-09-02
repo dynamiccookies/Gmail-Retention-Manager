@@ -33,8 +33,10 @@ Gmail filters decide **which conversations receive a retention policy**. This Go
 - Private HTML administration page for advanced configuration, backups, logging,
   and diagnostics
 - Managed time-driven schedules that can be created or changed from Gmail
+- Contacts-style cleanup suggestions for simple, redundant retention filters
 - Fail-closed Gmail metadata preflight before retention changes begin
-- Narrow `gmail.modify` authorization through the Advanced Gmail service
+- Narrow Gmail API authorization through `gmail.modify`, with
+  `gmail.settings.basic` used only for explicit filter cleanup
 - Verbose diagnostic logging for installation and troubleshooting
 - Script locking and batch processing to reduce duplicate or overlapping work
 
@@ -162,6 +164,20 @@ from:example.com
 8. Select **Create filter**.
 
 To change the policy later, edit the Gmail filter and select a different retention label. The script does not need to be modified.
+
+### Consolidate redundant retention filters
+
+Advanced Settings includes a **Filter cleanup** panel. It suggests a merge only
+when two or more Gmail filters apply the same valid retention-policy label, have
+no other action, and each uses one simple sender, recipient, or subject
+criterion. Complex filters and filters that archive, mark read, forward, remove
+labels, or perform any other action are left unchanged.
+
+Reviewing a suggestion shows every original criterion and the proposed combined
+Gmail `OR` query. When **Merge filters** is selected, the application creates
+and verifies the replacement before deleting any original. It stores a bounded
+undo record and downloads a JSON backup of the original definitions. **Undo
+last merge** recreates the originals before removing the combined replacement.
 
 ## Supported Retention Labels
 
@@ -480,6 +496,7 @@ The script requires access necessary to:
 - Read Gmail labels, conversations, and message metadata
 - Add and remove Gmail labels
 - Move messages or conversations to Trash or Inbox
+- Review, create, and remove Gmail filters when the user explicitly runs Filter cleanup
 - Create and send deletion-summary emails to the same account
 - Contact the public GitHub Releases API when update checks are enabled
 - Use Apps Script cache and locking services
