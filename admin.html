@@ -346,6 +346,12 @@
         overflow: hidden;
       }
 
+      #advancedSettingsPanel[open] {
+        position: relative;
+        z-index: 5;
+        overflow: visible;
+      }
+
       .panel-header {
         padding: 20px 22px 16px;
         border-bottom: 1px solid var(--border);
@@ -458,6 +464,111 @@
         margin: 5px 0 0;
         color: var(--danger);
         font-size: 12px;
+      }
+
+      .system-label-controls {
+        display: grid;
+        grid-template-columns: minmax(220px, 1fr) minmax(150px, 0.45fr) auto;
+        align-items: end;
+        gap: 10px;
+      }
+
+      .system-label-color-control {
+        position: relative;
+      }
+
+      .system-label-color-button {
+        display: flex;
+        width: 100%;
+        min-height: 44px;
+        align-items: center;
+        gap: 9px;
+        padding: 8px 34px 8px 11px;
+        border: 1px solid var(--input-border);
+        border-radius: 8px;
+        background: var(--input-background);
+        color: var(--text);
+        font-weight: 700;
+        text-align: left;
+      }
+
+      .system-label-color-button::after {
+        position: absolute;
+        right: 13px;
+        border-top: 5px solid currentColor;
+        border-right: 5px solid transparent;
+        border-left: 5px solid transparent;
+        content: "";
+      }
+
+      .system-label-color-button:focus-visible {
+        border-color: var(--primary);
+        outline: 3px solid var(--focus-ring);
+      }
+
+      .system-label-color-swatch {
+        flex: 0 0 auto;
+        position: absolute;
+        width: 22px;
+        height: 22px;
+        border: 1px solid var(--input-border);
+        border-radius: 50%;
+        background: transparent;
+        pointer-events: none;
+      }
+
+      .system-label-color-button .system-label-color-swatch {
+        position: static;
+      }
+
+      .system-label-color-palette {
+        position: absolute;
+        top: calc(100% + 6px);
+        right: 0;
+        z-index: 20;
+        display: grid;
+        grid-template-columns: repeat(6, 30px);
+        gap: 6px;
+        padding: 12px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface);
+        box-shadow: var(--shadow);
+      }
+
+      .system-label-color-palette[hidden] {
+        display: none;
+      }
+
+      .system-label-color-option {
+        display: grid;
+        width: 30px;
+        height: 30px;
+        padding: 0;
+        place-items: center;
+        border: 2px solid transparent;
+        border-radius: 50%;
+        color: var(--label-color-text);
+        background: var(--label-color-background);
+        font-size: 17px;
+        font-weight: 900;
+        line-height: 1;
+      }
+
+      .system-label-color-option:hover,
+      .system-label-color-option:focus-visible {
+        border-color: var(--text);
+        outline: none;
+        transform: scale(1.08);
+      }
+
+      .system-label-color-option[aria-selected="true"]::after {
+        content: "\2713";
+      }
+
+      .system-label-reset {
+        min-height: 44px;
+        white-space: nowrap;
       }
 
       .switch-row {
@@ -1043,6 +1154,14 @@
           grid-column: auto;
         }
 
+        .system-label-controls {
+          grid-template-columns: 1fr;
+        }
+
+        .system-label-reset {
+          width: 100%;
+        }
+
         .card {
           min-height: 0;
         }
@@ -1252,7 +1371,7 @@
       <header class="topbar">
         <div>
           <p class="eyebrow">Private administration</p>
-          <h1>Gmail Retention Manager</h1>
+          <h1>Retention Manager for Gmail™</h1>
           <p class="subtitle" id="ownerText"></p>
         </div>
         <div class="topbar-actions">
@@ -1339,7 +1458,7 @@
         <summary class="panel-header">
           <div>
             <h2>Schedule settings</h2>
-            <p>Control when Gmail Retention Manager scans for eligible messages.</p>
+            <p>Control when Retention Manager for Gmail™ scans for eligible messages.</p>
           </div>
         </summary>
 
@@ -1482,13 +1601,8 @@
                 <p class="field-error" id="rootLabelError"></p>
 
                 <div class="warning-box" id="rootLabelWarning" hidden>
-                  Changing this value does not rename existing Gmail labels or
-                  update Gmail filters. Labels under the previous root will no
-                  longer be managed.
-                  <label>
-                    <input id="rootLabelAcknowledgement" type="checkbox">
-                    <span>I understand the existing labels and filters are unchanged.</span>
-                  </label>
+                  Saving this change renames the existing root label and its
+                  child labels. Gmail filters continue using the same label IDs.
                 </div>
               </div>
 
@@ -1605,8 +1719,42 @@
             </div>
 
             <div class="field" style="margin-top:18px;">
-              <label for="systemLabel">System-notification label</label>
-              <input id="systemLabel" name="systemLabel" type="text" autocomplete="off">
+              <div class="system-label-controls">
+                <div>
+                  <label for="systemLabel">System-notification label</label>
+                  <input id="systemLabel" name="systemLabel" type="text" autocomplete="off">
+                </div>
+                <div class="system-label-color-control">
+                  <label for="systemLabelColorButton">Label color</label>
+                  <input id="systemLabelColor" name="systemLabelColor" type="hidden">
+                  <button
+                    class="system-label-color-button"
+                    id="systemLabelColorButton"
+                    type="button"
+                    aria-expanded="false"
+                    aria-haspopup="listbox"
+                  >
+                    <span
+                      class="system-label-color-swatch"
+                      id="systemLabelColorSwatch"
+                      aria-hidden="true"
+                    ></span>
+                    <span id="systemLabelColorName">Red</span>
+                  </button>
+                  <div
+                    class="system-label-color-palette"
+                    id="systemLabelColorPalette"
+                    role="listbox"
+                    aria-label="System-notification label color"
+                    hidden
+                  ></div>
+                </div>
+                <button
+                  class="button button-secondary system-label-reset"
+                  id="systemLabelColorReset"
+                  type="button"
+                >Reset color</button>
+              </div>
               <p class="help">
                 Internal child label used to prevent notification-email loops.
               </p>
@@ -1722,6 +1870,7 @@
       let pendingTheme = null;
       let themeSaveTimer = null;
       let themeSaveInFlight = false;
+      let systemLabelColorOptions = [];
       let scanStartedAt = null;
       let scanElapsedTimer = null;
       let scanInProgress = false;
@@ -1757,11 +1906,14 @@
           'lastSuccessValue', 'lastSuccessDetail', 'lastErrorValue',
           'lastErrorDetail', 'runButton', 'runHelp', 'settingsForm',
           'rootLabel', 'rootLabelError', 'rootLabelWarning',
-          'rootLabelAcknowledgement', 'starterLabels', 'starterLabelsError',
+          'starterLabels', 'starterLabelsError',
           'archiveOnLabel',
           'subjectPrefix', 'subjectPrefixError', 'notificationRetention',
           'notificationRetentionError', 'checkForUpdates', 'verboseLogging',
-          'systemLabel', 'systemLabelError', 'systemLabelWarning',
+          'systemLabel', 'systemLabelColor', 'systemLabelColorButton',
+          'systemLabelColorName', 'systemLabelColorPalette',
+          'systemLabelColorSwatch',
+          'systemLabelColorReset', 'systemLabelError', 'systemLabelWarning',
           'systemLabelAcknowledgement', 'unsavedText',
           'discardButton', 'saveButton', 'settingsBackupsPanel',
           'backupStorageWarning', 'backupEmptyMessage', 'backupList',
@@ -1829,6 +1981,24 @@
         elements.settingsForm.addEventListener('submit', saveSettings);
         elements.settingsForm.addEventListener('input', handleFormChange);
         elements.settingsForm.addEventListener('change', handleFormChange);
+        elements.systemLabelColorButton.addEventListener(
+          'click',
+          toggleSystemLabelColorPalette,
+        );
+        elements.systemLabelColorPalette.addEventListener(
+          'click',
+          selectSystemLabelColor,
+        );
+        elements.systemLabelColorReset.addEventListener(
+          'click',
+          resetSystemLabelColor,
+        );
+        document.addEventListener('click', closeSystemLabelColorPaletteOnClick);
+        document.addEventListener('keydown', event => {
+          if (event.key === 'Escape') {
+            closeSystemLabelColorPalette();
+          }
+        });
         window.addEventListener('beforeunload', event => {
           if (!dirty && !scheduleDirty && !scanInProgress && !backupBusy) {
             return;
@@ -1939,6 +2109,7 @@
           : 'Private owner installation';
         elements.repositoryLink.href = data.application.repositoryUrl;
         elements.releasesLink.href = data.application.releasesUrl;
+        populateSystemLabelColorOptions(data.systemLabelColorOptions);
         renderSettings(data.settings);
         renderRuntime(data.runtime);
         renderTrigger(data.trigger);
@@ -1959,7 +2130,7 @@
         }
 
         elements.updateAvailableTitle.textContent =
-          `Gmail Retention Manager v${availableUpdate.version} is available`;
+          `Retention Manager for Gmail™ v${availableUpdate.version} is available`;
         elements.updateAvailableDetail.textContent =
           `Installed version: v${applicationData.version}. Review the latest ` +
           'GitHub release and update manually.';
@@ -1979,7 +2150,9 @@
         elements.checkForUpdates.checked = settings.CHECK_FOR_UPDATES;
         elements.verboseLogging.checked = settings.VERBOSE_LOGGING;
         elements.systemLabel.value = settings.SYSTEM_NOTIFICATION_LABEL_SUFFIX;
-        elements.rootLabelAcknowledgement.checked = false;
+        elements.systemLabelColor.value =
+          settings.SYSTEM_NOTIFICATION_LABEL_COLOR;
+        updateSystemLabelColorSwatch();
         elements.systemLabelAcknowledgement.checked = false;
         elements.verboseNotice.hidden = !settings.VERBOSE_LOGGING;
         renderAvailableUpdate(
@@ -1987,6 +2160,101 @@
           settings.CHECK_FOR_UPDATES,
         );
         clearValidationErrors();
+      }
+
+      function populateSystemLabelColorOptions(options) {
+        systemLabelColorOptions = Array.isArray(options) ? clone(options) : [];
+        elements.systemLabelColorPalette.textContent = '';
+        systemLabelColorOptions
+          .filter(color => color.selectable !== false)
+          .forEach(color => {
+            const button = document.createElement('button');
+            button.className = 'system-label-color-option';
+            button.type = 'button';
+            button.setAttribute('role', 'option');
+            button.setAttribute('aria-label', color.name);
+            button.setAttribute('aria-selected', 'false');
+            button.dataset.backgroundColor = color.backgroundColor;
+            button.style.setProperty(
+              '--label-color-background',
+              color.backgroundColor,
+            );
+            button.style.setProperty('--label-color-text', color.textColor);
+            elements.systemLabelColorPalette.appendChild(button);
+          });
+      }
+
+      function updateSystemLabelColorSwatch() {
+        const backgroundColor = elements.systemLabelColor.value;
+        const selectedColor = systemLabelColorOptions.find(
+          color => color.backgroundColor === backgroundColor,
+        );
+        elements.systemLabelColorName.textContent = selectedColor
+          ? selectedColor.name
+          : 'Gmail default';
+        elements.systemLabelColorSwatch.style.backgroundColor = backgroundColor;
+        elements.systemLabelColorSwatch.style.backgroundImage = backgroundColor
+          ? 'none'
+          : 'linear-gradient(135deg, transparent 44%, #c5221f 45%, ' +
+            '#c5221f 55%, transparent 56%)';
+        elements.systemLabelColorPalette
+          .querySelectorAll('.system-label-color-option')
+          .forEach(option => {
+            option.setAttribute(
+              'aria-selected',
+              String(option.dataset.backgroundColor === backgroundColor),
+            );
+          });
+        elements.systemLabelColorReset.disabled = busy || !backgroundColor;
+      }
+
+      function toggleSystemLabelColorPalette(event) {
+        event.stopPropagation();
+        const shouldOpen = elements.systemLabelColorPalette.hidden;
+        elements.systemLabelColorPalette.hidden = !shouldOpen;
+        elements.systemLabelColorButton.setAttribute(
+          'aria-expanded',
+          String(shouldOpen),
+        );
+        if (shouldOpen) {
+          const selected = elements.systemLabelColorPalette.querySelector(
+            '[aria-selected="true"]',
+          );
+          (selected || elements.systemLabelColorPalette.firstElementChild)?.focus();
+        }
+      }
+
+      function selectSystemLabelColor(event) {
+        const option = event.target.closest('.system-label-color-option');
+        if (!option) {
+          return;
+        }
+        elements.systemLabelColor.value = option.dataset.backgroundColor;
+        updateSystemLabelColorSwatch();
+        closeSystemLabelColorPalette();
+        handleFormChange();
+        elements.systemLabelColorButton.focus();
+      }
+
+      function closeSystemLabelColorPalette() {
+        elements.systemLabelColorPalette.hidden = true;
+        elements.systemLabelColorButton.setAttribute('aria-expanded', 'false');
+      }
+
+      function closeSystemLabelColorPaletteOnClick(event) {
+        if (!elements.systemLabelColorPalette.hidden &&
+            !elements.systemLabelColorPalette.contains(event.target) &&
+            event.target !== elements.systemLabelColorButton) {
+          closeSystemLabelColorPalette();
+        }
+      }
+
+      function resetSystemLabelColor() {
+        elements.systemLabelColor.value = '';
+        updateSystemLabelColorSwatch();
+        closeSystemLabelColorPalette();
+        handleFormChange();
+        elements.systemLabelColorButton.focus();
       }
 
       function renderSettingsBackups(backups) {
@@ -2338,6 +2606,10 @@
           ['Check for updates', settings.CHECK_FOR_UPDATES ? 'On' : 'Off'],
           ['Verbose logging', settings.VERBOSE_LOGGING ? 'On' : 'Off'],
           ['System-notification label', settings.SYSTEM_NOTIFICATION_LABEL_SUFFIX],
+          [
+            'System-notification label color',
+            getSystemLabelColorName(settings.SYSTEM_NOTIFICATION_LABEL_COLOR),
+          ],
         ];
 
         elements.backupPreview.textContent = '';
@@ -2363,8 +2635,8 @@
 
         if (rootChanged) {
           warnings.push(
-            'The root label will change, but existing Gmail labels and filters ' +
-              'will not be renamed or updated.',
+            'The existing root label and its child labels will be renamed. ' +
+              'Gmail filters will keep using the same label IDs.',
           );
         }
         if (systemChanged) {
@@ -2380,7 +2652,7 @@
         elements.backupRestoreAcknowledgementText.textContent = rootChanged ||
           systemChanged
           ? 'I understand these settings will replace the current settings and ' +
-            'existing Gmail labels or filters will not be reorganized.'
+            'may rename existing Gmail labels.'
           : 'I understand these saved settings will replace the current settings.';
       }
 
@@ -2456,8 +2728,6 @@
           return;
         }
 
-        const rootChanged = selectedBackup.settings.ROOT_LABEL !==
-          initialSettings.ROOT_LABEL;
         const systemChanged =
           selectedBackup.settings.SYSTEM_NOTIFICATION_LABEL_SUFFIX !==
             initialSettings.SYSTEM_NOTIFICATION_LABEL_SUFFIX;
@@ -2473,10 +2743,13 @@
             setBackupRestoreBusy(false);
             updateDirtyState();
             closeBackupRestoreReview();
+            const colorWarning = response.systemLabelColor &&
+              response.systemLabelColor.warning;
             showNotice(
-              'Settings restored successfully. Your previous settings were ' +
-                'saved as the newest backup.',
-              'success',
+              colorWarning ||
+                'Settings restored successfully. Your previous settings were ' +
+                  'saved as the newest backup.',
+              colorWarning ? 'warning' : 'success',
             );
           })
           .withFailureHandler(error => {
@@ -2490,7 +2763,6 @@
             backupId: selectedBackup.id,
             confirmRestore: true,
             acknowledgements: {
-              rootLabelChange: rootChanged,
               systemLabelChange: systemChanged,
             },
           });
@@ -3118,8 +3390,19 @@
           NOTIFICATION_RETENTION_LABEL_SUFFIX:
             elements.notificationRetention.value.trim(),
           SYSTEM_NOTIFICATION_LABEL_SUFFIX: elements.systemLabel.value.trim(),
+          SYSTEM_NOTIFICATION_LABEL_COLOR: elements.systemLabelColor.value,
           CHECK_FOR_UPDATES: elements.checkForUpdates.checked,
         };
+      }
+
+      function getSystemLabelColorName(backgroundColor) {
+        if (!backgroundColor) {
+          return 'Gmail default';
+        }
+        const option = systemLabelColorOptions.find(
+          candidate => candidate.backgroundColor === backgroundColor,
+        );
+        return option ? option.name : backgroundColor;
       }
 
       function updateWarnings() {
@@ -3135,9 +3418,6 @@
         elements.rootLabelWarning.hidden = !rootChanged;
         elements.systemLabelWarning.hidden = !systemChanged;
 
-        if (!rootChanged) {
-          elements.rootLabelAcknowledgement.checked = false;
-        }
         if (!systemChanged) {
           elements.systemLabelAcknowledgement.checked = false;
         }
@@ -3154,6 +3434,9 @@
         elements.discardButton.disabled = controlsBusy || !dirty;
         elements.saveButton.disabled = controlsBusy || !dirty;
         elements.runButton.disabled = controlsBusy || dirty;
+        elements.systemLabelColorButton.disabled = controlsBusy;
+        elements.systemLabelColorReset.disabled = controlsBusy ||
+          !elements.systemLabelColor.value;
         elements.runHelp.textContent = dirty
           ? 'Save or discard your changes before running a retention scan.'
           : 'Immediately process all eligible messages using the saved settings.';
@@ -3186,6 +3469,8 @@
             second.NOTIFICATION_RETENTION_LABEL_SUFFIX &&
           first.SYSTEM_NOTIFICATION_LABEL_SUFFIX ===
             second.SYSTEM_NOTIFICATION_LABEL_SUFFIX &&
+          first.SYSTEM_NOTIFICATION_LABEL_COLOR ===
+            second.SYSTEM_NOTIFICATION_LABEL_COLOR &&
           first.CHECK_FOR_UPDATES === second.CHECK_FOR_UPDATES
         );
       }
@@ -3295,15 +3580,9 @@
         }
 
         const settings = getFormSettings();
-        const rootChanged = settings.ROOT_LABEL !== initialSettings.ROOT_LABEL;
         const systemChanged = settings.SYSTEM_NOTIFICATION_LABEL_SUFFIX !==
           initialSettings.SYSTEM_NOTIFICATION_LABEL_SUFFIX;
 
-        if (rootChanged && !elements.rootLabelAcknowledgement.checked) {
-          showNotice('Acknowledge the root-label consequences before saving.', 'error');
-          elements.rootLabelAcknowledgement.focus();
-          return;
-        }
         if (systemChanged && !elements.systemLabelAcknowledgement.checked) {
           showNotice('Acknowledge the internal-label consequence before saving.', 'error');
           elements.systemLabelAcknowledgement.focus();
@@ -3330,7 +3609,12 @@
             updateWarnings();
             setBusy(false);
             updateDirtyState();
-            showNotice('Settings saved successfully.', 'success');
+            const colorWarning = response.systemLabelColor &&
+              response.systemLabelColor.warning;
+            showNotice(
+              colorWarning || 'Settings saved successfully.',
+              colorWarning ? 'warning' : 'success',
+            );
           })
           .withFailureHandler(error => {
             setBusy(false);
@@ -3340,7 +3624,6 @@
           .saveAdminPageSettings({
             settings,
             acknowledgements: {
-              rootLabelChange: elements.rootLabelAcknowledgement.checked,
               systemLabelChange: elements.systemLabelAcknowledgement.checked,
             },
           });
