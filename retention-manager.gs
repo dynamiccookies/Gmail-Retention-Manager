@@ -3032,7 +3032,7 @@ function formatSidebarStatus_(label, status) {
     active: '#137333',
     error: '#c5221f',
     warning: '#b06000',
-    running: '#1a73e8',
+    running: '#4285f4',
     queued: '#b06000',
     skipped: '#b06000',
     disabled: '#5f6368',
