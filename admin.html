@@ -788,6 +788,118 @@
         gap: 12px;
       }
 
+      .filter-cleanup-summary {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        margin-bottom: 16px;
+      }
+
+      .filter-cleanup-badge {
+        display: inline-flex;
+        align-items: center;
+        min-height: 28px;
+        padding: 4px 10px;
+        border-radius: 999px;
+        background: var(--primary-soft);
+        color: var(--primary-soft-text);
+        font-size: 12px;
+        font-weight: 700;
+      }
+
+      .filter-cleanup-list {
+        display: grid;
+        gap: 12px;
+      }
+
+      .filter-cleanup-item {
+        padding: 16px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--surface-muted);
+      }
+
+      .filter-cleanup-item-header,
+      .filter-cleanup-actions,
+      .filter-cleanup-undo {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 14px;
+      }
+
+      .filter-cleanup-item h3 {
+        margin-bottom: 3px;
+      }
+
+      .filter-cleanup-count {
+        color: var(--muted);
+        font-size: 13px;
+        white-space: nowrap;
+      }
+
+      .filter-cleanup-values {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 7px;
+        margin: 14px 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .filter-cleanup-value {
+        padding: 5px 8px;
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        background: var(--input-background);
+        font-family: Consolas, "Courier New", monospace;
+        font-size: 12px;
+        overflow-wrap: anywhere;
+      }
+
+      .filter-cleanup-query {
+        display: block;
+        max-height: 130px;
+        margin-bottom: 14px;
+        padding: 10px 12px;
+        overflow: auto;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--input-background);
+        color: var(--text);
+        font-family: Consolas, "Courier New", monospace;
+        font-size: 12px;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
+
+      .filter-cleanup-actions {
+        justify-content: flex-end;
+      }
+
+      .filter-cleanup-empty {
+        margin: 0;
+        padding: 18px;
+        border: 1px dashed var(--border);
+        border-radius: 10px;
+        color: var(--muted);
+        text-align: center;
+      }
+
+      .filter-cleanup-undo {
+        margin-bottom: 16px;
+        padding: 13px 14px;
+        border: 1px solid var(--success-border);
+        border-radius: 9px;
+        background: var(--success-soft);
+        color: var(--success-message-text);
+      }
+
+      .filter-cleanup-undo p {
+        margin: 0;
+      }
+
       .backup-toolbar {
         display: flex;
         align-items: center;
@@ -1184,14 +1296,21 @@
         .backup-toolbar,
         .backup-item-header,
         .backup-item-actions,
-        .backup-restore-actions {
+        .backup-restore-actions,
+        .filter-cleanup-summary,
+        .filter-cleanup-item-header,
+        .filter-cleanup-actions,
+        .filter-cleanup-undo {
           align-items: stretch;
           flex-direction: column;
         }
 
         .backup-toolbar .button,
         .backup-item-actions .button,
-        .backup-restore-actions .button {
+        .backup-restore-actions .button,
+        .filter-cleanup-summary .button,
+        .filter-cleanup-actions .button,
+        .filter-cleanup-undo .button {
           width: 100%;
         }
 
@@ -1773,6 +1892,48 @@
 
       </form>
 
+      <details class="panel collapsible-panel" id="filterCleanupPanel">
+        <summary class="panel-header">
+          <div>
+            <h2>Filter cleanup</h2>
+            <p>Merge simple Gmail filters that apply the same retention label.</p>
+          </div>
+          <span class="filter-cleanup-badge" id="filterCleanupBadge" hidden></span>
+        </summary>
+
+        <div class="panel-body">
+          <div class="filter-cleanup-summary">
+            <p class="help" id="filterCleanupSummary"></p>
+            <button
+              class="button button-secondary"
+              id="filterCleanupRefreshButton"
+              type="button"
+            >Refresh suggestions</button>
+          </div>
+          <div
+            class="filter-cleanup-undo"
+            id="filterCleanupUndo"
+            hidden
+          >
+            <p id="filterCleanupUndoText"></p>
+            <button
+              class="button button-secondary"
+              id="filterCleanupUndoButton"
+              type="button"
+            >Undo last merge</button>
+          </div>
+          <p class="filter-cleanup-empty" id="filterCleanupEmpty" hidden>
+            No filter cleanup suggestions are available.
+          </p>
+          <div class="filter-cleanup-list" id="filterCleanupList"></div>
+          <p class="help" style="margin-top:14px;">
+            Only filters with one simple sender, recipient, or subject criterion
+            and no action other than applying one valid retention label are
+            eligible. Complex and unrelated Gmail filters are left unchanged.
+          </p>
+        </div>
+      </details>
+
       <details class="panel collapsible-panel" id="settingsBackupsPanel">
         <summary class="panel-header">
           <div>
@@ -1861,6 +2022,8 @@
       let scheduleBusy = false;
       let scheduleDirty = false;
       let backupBusy = false;
+      let filterCleanupBusy = false;
+      let filterCleanupData = { suggestions: [], undo: { available: false } };
       let settingsBackups = { limit: 5, warning: null, items: [] };
       let selectedBackup = null;
       let backupReviewReturnFocus = null;
@@ -1916,6 +2079,11 @@
           'systemLabelColorReset', 'systemLabelError', 'systemLabelWarning',
           'systemLabelAcknowledgement', 'unsavedText',
           'discardButton', 'saveButton', 'settingsBackupsPanel',
+          'filterCleanupPanel', 'filterCleanupBadge',
+          'filterCleanupSummary', 'filterCleanupRefreshButton',
+          'filterCleanupUndo', 'filterCleanupUndoText',
+          'filterCleanupUndoButton', 'filterCleanupEmpty',
+          'filterCleanupList',
           'backupStorageWarning', 'backupEmptyMessage', 'backupList',
           'backupRetentionNote', 'backupImportInput', 'importBackupButton',
           'repositoryLink', 'releasesLink',
@@ -1926,6 +2094,18 @@
         elements.themeToggle.addEventListener('change', queueThemePreferenceSave);
         elements.retryButton.addEventListener('click', loadAdminPage);
         elements.runButton.addEventListener('click', runRetentionNow);
+        elements.filterCleanupRefreshButton.addEventListener(
+          'click',
+          refreshFilterCleanup,
+        );
+        elements.filterCleanupUndoButton.addEventListener(
+          'click',
+          undoLastFilterMerge,
+        );
+        elements.filterCleanupList.addEventListener(
+          'click',
+          handleFilterCleanupClick,
+        );
         elements.cancelScanButton.addEventListener('click', closeScanConfirmation);
         elements.confirmScanButton.addEventListener(
           'click',
@@ -2000,7 +2180,10 @@
           }
         });
         window.addEventListener('beforeunload', event => {
-          if (!dirty && !scheduleDirty && !scanInProgress && !backupBusy) {
+          if (
+            !dirty && !scheduleDirty && !scanInProgress && !backupBusy &&
+            !filterCleanupBusy
+          ) {
             return;
           }
           event.preventDefault();
@@ -2115,6 +2298,7 @@
         renderTrigger(data.trigger);
         renderScheduleForm(data.trigger);
         renderSettingsBackups(data.backups);
+        renderFilterCleanup(data.filterCleanup);
         updateDirtyState();
       }
 
@@ -2255,6 +2439,225 @@
         closeSystemLabelColorPalette();
         handleFormChange();
         elements.systemLabelColorButton.focus();
+      }
+
+      function getFilterCriterionLabel(field) {
+        return {
+          from: 'Sender',
+          to: 'Recipient',
+          subject: 'Subject',
+        }[field] || field;
+      }
+
+      function renderFilterCleanup(data) {
+        filterCleanupData = data && Array.isArray(data.suggestions)
+          ? clone(data)
+          : { totalFilterCount: 0, suggestions: [], undo: { available: false } };
+        const suggestions = filterCleanupData.suggestions;
+        const totalOriginals = suggestions.reduce(
+          (total, suggestion) => total + Number(suggestion.originalCount || 0),
+          0,
+        );
+
+        elements.filterCleanupBadge.hidden = suggestions.length === 0;
+        elements.filterCleanupBadge.textContent = suggestions.length === 1
+          ? '1 suggestion'
+          : `${suggestions.length} suggestions`;
+        elements.filterCleanupSummary.textContent = filterCleanupData.error
+          ? `Filter cleanup analysis is unavailable: ${filterCleanupData.error}`
+          : suggestions.length > 0
+            ? `${totalOriginals} simple retention filters can be consolidated ` +
+              `across ${suggestions.length} cleanup ` +
+              `${suggestions.length === 1 ? 'suggestion' : 'suggestions'}.`
+            : `No safe consolidation candidates were found among ` +
+              `${Number(filterCleanupData.totalFilterCount || 0)} Gmail filters.`;
+        elements.filterCleanupEmpty.hidden = suggestions.length > 0 ||
+          Boolean(filterCleanupData.error);
+        elements.filterCleanupList.textContent = '';
+
+        suggestions.forEach(suggestion => {
+          const item = document.createElement('article');
+          item.className = 'filter-cleanup-item';
+
+          const header = document.createElement('div');
+          header.className = 'filter-cleanup-item-header';
+          const titleGroup = document.createElement('div');
+          const title = document.createElement('h3');
+          title.textContent = suggestion.labelName;
+          const metadata = document.createElement('p');
+          metadata.className = 'metadata';
+          metadata.textContent =
+            `${getFilterCriterionLabel(suggestion.criterionField)} filters`;
+          titleGroup.append(title, metadata);
+          const count = document.createElement('span');
+          count.className = 'filter-cleanup-count';
+          count.textContent = `${suggestion.originalCount} filters → 1 filter`;
+          header.append(titleGroup, count);
+
+          const values = document.createElement('ul');
+          values.className = 'filter-cleanup-values';
+          suggestion.criteria.forEach(criterion => {
+            const value = document.createElement('li');
+            value.className = 'filter-cleanup-value';
+            value.textContent = criterion.value;
+            values.appendChild(value);
+          });
+
+          const queryLabel = document.createElement('p');
+          queryLabel.className = 'metadata';
+          queryLabel.textContent = 'Proposed combined Gmail query';
+          const query = document.createElement('code');
+          query.className = 'filter-cleanup-query';
+          query.textContent = suggestion.combinedQuery;
+
+          const actions = document.createElement('div');
+          actions.className = 'filter-cleanup-actions';
+          const mergeButton = document.createElement('button');
+          mergeButton.className = 'button button-primary';
+          mergeButton.type = 'button';
+          mergeButton.dataset.filterCleanupId = suggestion.id;
+          mergeButton.textContent = 'Merge filters';
+          mergeButton.disabled = filterCleanupBusy || dirty || scheduleDirty ||
+            busy || backupBusy;
+          actions.appendChild(mergeButton);
+
+          item.append(header, values, queryLabel, query, actions);
+          elements.filterCleanupList.appendChild(item);
+        });
+
+        const undo = filterCleanupData.undo || { available: false };
+        elements.filterCleanupUndo.hidden = !undo.available;
+        elements.filterCleanupUndoText.textContent = undo.available
+          ? `${undo.originalCount} filters for ${undo.labelName} were merged ` +
+            `${formatTimestamp(undo.mergedAt)}.`
+          : '';
+        updateFilterCleanupControls();
+      }
+
+      function updateFilterCleanupControls() {
+        const controlsBusy = filterCleanupBusy || busy || scheduleBusy ||
+          backupBusy || dirty || scheduleDirty;
+        elements.filterCleanupRefreshButton.disabled = controlsBusy;
+        elements.filterCleanupUndoButton.disabled = controlsBusy;
+        elements.filterCleanupList
+          .querySelectorAll('button[data-filter-cleanup-id]')
+          .forEach(button => {
+            button.disabled = controlsBusy;
+          });
+      }
+
+      function setFilterCleanupBusy(isBusy, actionText) {
+        filterCleanupBusy = isBusy;
+        elements.filterCleanupRefreshButton.textContent = isBusy
+          ? actionText
+          : 'Refresh suggestions';
+        elements.filterCleanupUndoButton.textContent = isBusy
+          ? actionText
+          : 'Undo last merge';
+        updateFilterCleanupControls();
+        updateDirtyState();
+      }
+
+      function refreshFilterCleanup() {
+        if (filterCleanupBusy) {
+          return;
+        }
+        clearNotice();
+        setFilterCleanupBusy(true, 'Refreshing…');
+        google.script.run
+          .withSuccessHandler(data => {
+            setFilterCleanupBusy(false);
+            renderFilterCleanup(data);
+          })
+          .withFailureHandler(error => {
+            setFilterCleanupBusy(false);
+            showNotice(
+              `Filter cleanup analysis failed: ${getErrorMessage(error)}`,
+              'error',
+            );
+          })
+          .refreshRetentionFilterCleanupFromAdmin();
+      }
+
+      function handleFilterCleanupClick(event) {
+        const button = event.target.closest('button[data-filter-cleanup-id]');
+        if (!button || filterCleanupBusy) {
+          return;
+        }
+        const suggestion = filterCleanupData.suggestions.find(
+          item => item.id === button.dataset.filterCleanupId,
+        );
+        if (!suggestion) {
+          showNotice(
+            'That filter cleanup suggestion is no longer available. Refresh the analysis.',
+            'error',
+          );
+          return;
+        }
+        mergeFilterCleanupSuggestion(suggestion);
+      }
+
+      function mergeFilterCleanupSuggestion(suggestion) {
+        if (dirty || scheduleDirty || busy || backupBusy) {
+          showNotice(
+            'Save or discard all other changes before merging Gmail filters.',
+            'error',
+          );
+          return;
+        }
+
+        clearNotice();
+        setFilterCleanupBusy(true, 'Merging…');
+        google.script.run
+          .withSuccessHandler(response => {
+            setFilterCleanupBusy(false);
+            if (response.backupExport) {
+              downloadFilterCleanupBackup(response.backupExport);
+            }
+            renderFilterCleanup(response.filterCleanup);
+            showNotice(
+              response.message || 'Gmail filters merged successfully.',
+              response.status === 'warning' ? 'warning' : 'success',
+            );
+          })
+          .withFailureHandler(error => {
+            setFilterCleanupBusy(false);
+            showNotice(`Filter merge failed: ${getErrorMessage(error)}`, 'error');
+          })
+          .mergeRetentionFiltersFromAdmin({ suggestionId: suggestion.id });
+      }
+
+      function undoLastFilterMerge() {
+        if (filterCleanupBusy) {
+          return;
+        }
+        clearNotice();
+        setFilterCleanupBusy(true, 'Restoring…');
+        google.script.run
+          .withSuccessHandler(response => {
+            setFilterCleanupBusy(false);
+            renderFilterCleanup(response.filterCleanup);
+            showNotice(response.message, 'success');
+          })
+          .withFailureHandler(error => {
+            setFilterCleanupBusy(false);
+            showNotice(`Filter merge undo failed: ${getErrorMessage(error)}`, 'error');
+          })
+          .undoLastRetentionFilterMergeFromAdmin();
+      }
+
+      function downloadFilterCleanupBackup(backup) {
+        const content = JSON.stringify(backup, null, 2);
+        const blob = new Blob([content], { type: 'application/json' });
+        const link = document.createElement('a');
+        const timestamp = String(backup.mergedAt || new Date().toISOString())
+          .replace(/[:.]/g, '-');
+        link.href = URL.createObjectURL(blob);
+        link.download = `retention-manager-filter-backup-${timestamp}.json`;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(() => URL.revokeObjectURL(link.href), 0);
       }
 
       function renderSettingsBackups(backups) {
@@ -2662,7 +3065,8 @@
       }
 
       function updateBackupReviewControls() {
-        const disabled = busy || scheduleBusy || backupBusy || dirty || scheduleDirty;
+        const disabled = busy || scheduleBusy || backupBusy ||
+          filterCleanupBusy || dirty || scheduleDirty;
         elements.importBackupButton.disabled = disabled;
         elements.backupImportInput.disabled = disabled;
         elements.backupList
@@ -3053,7 +3457,8 @@
         const confirmationRequired =
           currentTrigger.requiresExistingTriggerConfirmation;
         const confirmed = elements.scheduleReplaceAcknowledgement.checked;
-        const controlsBusy = busy || scheduleBusy || backupBusy;
+        const controlsBusy = busy || scheduleBusy || backupBusy ||
+          filterCleanupBusy;
 
         [
           elements.scheduleEnabled,
@@ -3429,7 +3834,8 @@
         }
 
         dirty = !retentionSettingsEqual(getFormSettings(), initialSettings);
-        const controlsBusy = busy || scheduleBusy || backupBusy;
+        const controlsBusy = busy || scheduleBusy || backupBusy ||
+          filterCleanupBusy;
         elements.unsavedText.hidden = !dirty;
         elements.discardButton.disabled = controlsBusy || !dirty;
         elements.saveButton.disabled = controlsBusy || !dirty;
@@ -3441,6 +3847,7 @@
           ? 'Save or discard your changes before running a retention scan.'
           : 'Immediately process all eligible messages using the saved settings.';
         updateBackupReviewControls();
+        updateFilterCleanupControls();
       }
 
       function retentionSettingsEqual(first, second) {
