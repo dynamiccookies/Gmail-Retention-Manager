@@ -283,7 +283,7 @@ Retention/_System
 ```
 
 The exact names are derived from the configured root and notification suffixes.
-The `_System` label uses red by default. Its color can be changed from Advanced
+The `_System` label uses red by default. Its color can be changed from Label
 settings, or reset to Gmail's default uncolored-label appearance.
 
 When the notification retention period expires:

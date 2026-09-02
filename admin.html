@@ -432,6 +432,10 @@
         grid-template-columns: repeat(3, minmax(0, 1fr));
       }
 
+      .notification-field-grid {
+        grid-template-columns: minmax(0, 1fr) minmax(270px, 390px);
+      }
+
       .field-full {
         grid-column: 1 / -1;
       }
@@ -1270,7 +1274,8 @@
 
         .dashboard-grid,
         .form-grid,
-        .schedule-field-grid {
+        .schedule-field-grid,
+        .notification-field-grid {
           grid-template-columns: 1fr;
         }
 
@@ -1835,7 +1840,7 @@
           </summary>
 
           <div class="panel-body">
-            <div class="form-grid">
+            <div class="form-grid notification-field-grid">
               <div class="field">
                 <label for="subjectPrefix">Notification email subject prefix</label>
                 <div class="composite-input">
@@ -1914,7 +1919,7 @@
         <summary class="panel-header">
           <div>
             <h2>Filter cleanup</h2>
-            <p>Merge simple Gmail filters that apply the same retention label.</p>
+            <p>Merge simple filters that apply the same retention label.</p>
           </div>
           <span class="filter-cleanup-badge" id="filterCleanupBadge" hidden></span>
         </summary>
@@ -1947,7 +1952,7 @@
           <p class="help" style="margin-top:14px;">
             Only filters with one simple sender, recipient, or subject criterion
             and no action other than applying one valid retention label are
-            eligible. Complex and unrelated Gmail filters are left unchanged.
+            eligible. Complex and unrelated filters are left unchanged.
           </p>
         </div>
       </details>
@@ -2532,7 +2537,7 @@
               `across ${suggestions.length} cleanup ` +
               `${suggestions.length === 1 ? 'suggestion' : 'suggestions'}.`
             : `No safe consolidation candidates were found among ` +
-              `${Number(filterCleanupData.totalFilterCount || 0)} Gmail filters.`;
+              `${Number(filterCleanupData.totalFilterCount || 0)} filters.`;
         elements.filterCleanupEmpty.hidden = suggestions.length > 0 ||
           Boolean(filterCleanupData.error);
         elements.filterCleanupList.textContent = '';
@@ -2567,7 +2572,7 @@
 
           const queryLabel = document.createElement('p');
           queryLabel.className = 'metadata';
-          queryLabel.textContent = 'Proposed combined Gmail query';
+          queryLabel.textContent = 'Proposed combined query';
           const query = document.createElement('code');
           query.className = 'filter-cleanup-query';
           query.textContent = suggestion.combinedQuery;
@@ -2662,7 +2667,7 @@
       function mergeFilterCleanupSuggestion(suggestion) {
         if (dirty || scheduleDirty || busy || backupBusy) {
           showNotice(
-            'Save or discard all other changes before merging Gmail filters.',
+            'Save or discard all other changes before merging filters.',
             'error',
           );
           return;
@@ -2678,7 +2683,7 @@
             }
             renderFilterCleanup(response.filterCleanup);
             showNotice(
-              response.message || 'Gmail filters merged successfully.',
+              response.message || 'Filters merged successfully.',
               response.status === 'warning' ? 'warning' : 'success',
             );
           })
@@ -3280,7 +3285,6 @@
               ? dailyLine
               : `Approximately ${frequency.runsPerDay} runs per day`,
           );
-          appendScheduleDetailLine('Managed by Retention Manager');
           return;
         }
 
@@ -3291,7 +3295,6 @@
               ? `Saved: ${frequency.label} · ${dailyLine}`
               : `Saved: ${frequency.label}`,
           );
-          appendScheduleDetailLine('Managed by Retention Manager');
           return;
         }
 
@@ -3718,6 +3721,7 @@
       }
 
       function renderRuntime(runtime) {
+        elements.lastErrorValue.style.whiteSpace = '';
         const successfulAt = runtime.lastSuccessfulRunAt;
         const successfulResult = runtime.lastSuccessfulResult ||
           (runtime.lastResult && runtime.lastResult.status === 'success'
@@ -3740,8 +3744,9 @@
         const resolved = successfulAt &&
           new Date(successfulAt).getTime() > new Date(runtime.lastErrorAt).getTime();
         elements.lastErrorValue.textContent = resolved
-          ? `Resolved · ${formatTimestamp(runtime.lastErrorAt)}`
+          ? `Resolved\n${formatTimestamp(runtime.lastErrorAt)}`
           : formatTimestamp(runtime.lastErrorAt);
+        elements.lastErrorValue.style.whiteSpace = resolved ? 'pre-line' : '';
         elements.lastErrorDetail.textContent = runtime.lastErrorMessage ||
           'An unspecified error was recorded.';
       }

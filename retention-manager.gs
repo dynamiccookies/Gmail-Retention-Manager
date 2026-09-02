@@ -3033,14 +3033,14 @@ function formatSidebarStatus_(label, status) {
     error: '#c5221f',
     warning: '#b06000',
     running: '#1a73e8',
-    queued: '#1a73e8',
+    queued: '#b06000',
     skipped: '#b06000',
     disabled: '#5f6368',
     never: '#5f6368',
     unknown: '#5f6368',
   };
   const color = colors[status] || colors.unknown;
-  return `<font color="${color}"><b>${escapeHtml(label)}</b></font>`;
+  return `<font color="${color}"><b>● ${escapeHtml(label)}</b></font>`;
 }
 
 /** @return {CardSection} Card section with a clearly emphasized heading. */
@@ -3090,6 +3090,39 @@ function formatSidebarTimestamp_(timestamp, timeZone) {
   return Utilities.formatDate(date, timeZone, 'MMM d, yyyy · h:mm a z');
 }
 
+/** @return {string} Compact elapsed time between two ISO timestamps. */
+function formatSidebarRunDuration_(startedAt, completedAt) {
+  const started = startedAt ? new Date(startedAt) : null;
+  const completed = completedAt ? new Date(completedAt) : new Date();
+  if (
+    !started || Number.isNaN(started.getTime()) ||
+    Number.isNaN(completed.getTime()) || completed.getTime() < started.getTime()
+  ) {
+    return '';
+  }
+
+  const totalSeconds = Math.floor(
+    (completed.getTime() - started.getTime()) / 1000,
+  );
+  if (totalSeconds < 1) {
+    return 'less than 1 second';
+  }
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+  const parts = [];
+  if (hours > 0) {
+    parts.push(`${hours} hour${hours === 1 ? '' : 's'}`);
+  }
+  if (minutes > 0) {
+    parts.push(`${minutes} minute${minutes === 1 ? '' : 's'}`);
+  }
+  if (seconds > 0 && hours === 0) {
+    parts.push(`${seconds} second${seconds === 1 ? '' : 's'}`);
+  }
+  return parts.join(' ');
+}
+
 /**
  * Summarizes the most recent retention result without reproducing its email.
  *
@@ -3110,8 +3143,13 @@ function getSidebarResultSummary_(result) {
   const moved = Number.isFinite(result.movedMessageCount)
     ? result.movedMessageCount
     : 0;
+  const duration = formatSidebarRunDuration_(
+    result.startedAt,
+    result.completedAt,
+  );
   return `${reviewed} conversation${reviewed === 1 ? '' : 's'} reviewed · ` +
-    `${moved} message${moved === 1 ? '' : 's'} moved`;
+    `${moved} message${moved === 1 ? '' : 's'} moved` +
+    (duration ? ` · Run time: ${duration}` : '');
 }
 
 /**
@@ -3300,11 +3338,28 @@ function buildRetentionSidebarCard_(overrides = {}) {
         )),
   );
   if (runPending) {
+    const pendingAt = runtime.lastRunStatus === 'queued'
+      ? runtime.lastRunQueuedAt
+      : runtime.lastRunStartedAt;
+    const pendingDuration = formatSidebarRunDuration_(pendingAt, null);
+    const pendingTime = pendingAt
+      ? Utilities.formatDate(
+        new Date(pendingAt),
+        preferences.timeZone,
+        'h:mm:ss a z',
+      )
+      : 'an unknown time';
     statusSection.addWidget(
       CardService.newTextParagraph().setText(
         runtime.lastRunStatus === 'queued'
-          ? 'Waiting for the background retention scan to start.'
-          : 'The background retention scan is in progress.',
+          ? `Queued at ${escapeHtml(pendingTime)}` +
+            (pendingDuration
+              ? ` · waiting ${escapeHtml(pendingDuration)} to start.`
+              : ' · waiting to start.')
+          : `Started at ${escapeHtml(pendingTime)}` +
+            (pendingDuration
+              ? ` · running for ${escapeHtml(pendingDuration)}.`
+              : ' · scan in progress.'),
       ),
     );
   } else if (runtime.lastRunStatus !== 'never') {
