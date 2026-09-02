@@ -450,6 +450,14 @@ The script builds Trash links using the Gmail account's email address rather tha
 
 Confirm that the target Gmail account is signed in within the browser opening the link.
 
+### Advanced Settings fails when multiple Google accounts are signed in
+
+Google Apps Script does not support simultaneous multi-login reliably for add-ons
+or web apps. If Advanced Settings opens a Google Drive access-error page, sign
+out of the other Google accounts and retry while signed in only to the account
+that owns this installation. Alternatively, open the web-app URL in an
+Incognito/private window and sign in only to that account.
+
 ### No update notice appears
 
 The update notice appears only when:
