@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">Retention Manager for Gmail</title>
+  <desc id="desc">A large red email envelope with an integrated white clock on a white tile.</desc>
+
+  <!-- White tile with a minimal red edge for visibility in light mode. -->
+  <rect x="2" y="2" width="124" height="124" rx="23" fill="#ffffff" stroke="#e50920" stroke-width="3"/>
+
+  <!-- Oversized red envelope using nearly the full canvas. -->
+  <rect x="8" y="27" width="112" height="76" rx="12" fill="#e50920"/>
+
+  <!-- Shallower flap keeps both white edges visible around the clock overlap. -->
+  <path d="M14 35l50 35 50-35" fill="none" stroke="#ffffff" stroke-width="7" stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- Lower-right clock overlaps only a short section of the flap. -->
+  <circle cx="97" cy="82" r="26" fill="#ffffff" stroke="#e50920" stroke-width="6"/>
+  <path d="M97 68v15l11 7" fill="none" stroke="#e50920" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
