@@ -1520,7 +1520,7 @@
           >
           <div>
             <p class="eyebrow">Private administration</p>
-            <h1>Retention Manager for Gmail™</h1>
+            <h1 id="applicationName"></h1>
             <p class="subtitle" id="ownerText"></p>
           </div>
         </div>
@@ -1606,7 +1606,7 @@
         <summary class="panel-header">
           <div>
             <h2>Schedule settings</h2>
-            <p>Control when Retention Manager for Gmail™ scans for eligible messages.</p>
+            <p id="scheduleSettingsDescription"></p>
           </div>
         </summary>
 
@@ -2081,6 +2081,7 @@
           'backupDeleteOverlay', 'backupDeleteTitle',
           'backupDeleteDescription', 'cancelBackupDeleteButton',
           'confirmBackupDeleteButton',
+          'applicationName', 'scheduleSettingsDescription',
           'ownerText', 'versionPill', 'globalNotice', 'verboseNotice',
           'updateAvailableNotice', 'updateAvailableTitle',
           'updateAvailableDetail', 'updateAvailableLink',
@@ -2315,6 +2316,9 @@
       }
 
       function renderApplication(data) {
+        elements.applicationName.textContent = data.application.name;
+        elements.scheduleSettingsDescription.textContent =
+          `Control when ${data.application.name} scans for eligible messages.`;
         persistedTheme = data.adminPreferences && data.adminPreferences.theme
           ? data.adminPreferences.theme
           : 'dark';
@@ -2351,7 +2355,7 @@
         }
 
         elements.updateAvailableTitle.textContent =
-          `Retention Manager for Gmail™ v${availableUpdate.version} is available`;
+          `${applicationData.name} v${availableUpdate.version} is available`;
         elements.updateAvailableDetail.textContent =
           `Installed version: v${applicationData.version}. Review the latest ` +
           'GitHub release and update manually.';
