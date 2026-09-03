@@ -78,6 +78,13 @@ const RETENTION_UPDATE_NOTIFICATION_HISTORY_LIMIT = 25;
 const RETENTION_PENDING_SYSTEM_EMAILS_PROPERTY_KEY =
   'GMAIL_RETENTION_PENDING_SYSTEM_EMAILS';
 const RETENTION_PENDING_SYSTEM_EMAILS_SCHEMA_VERSION = 1;
+const RETENTION_DELETION_OUTBOX_PROPERTY_KEY =
+  'GMAIL_RETENTION_DELETION_REPORT_OUTBOX';
+const RETENTION_DELETION_OUTBOX_CHUNK_PREFIX =
+  'GMAIL_RETENTION_DELETION_REPORT_CHUNK_';
+const RETENTION_DELETION_OUTBOX_SCHEMA_VERSION = 1;
+const RETENTION_DELETION_OUTBOX_CHUNK_SIZE = 7500;
+const RETENTION_DELETION_OUTBOX_MAX_ENCODED_CHARACTERS = 375000;
 const RETENTION_ADMIN_PREFERENCES_PROPERTY_KEY =
   'GMAIL_RETENTION_ADMIN_PREFERENCES';
 const RETENTION_ADMIN_PAGE_URL_PROPERTY_KEY =
@@ -5187,6 +5194,187 @@ function retryPendingManagedSystemEmails_() {
   }
 }
 
+/** Removes every property used by the durable deletion-report outbox. */
+function clearDeletionReportOutbox_() {
+  const properties = PropertiesService.getScriptProperties();
+  const keys = Object.keys(properties.getProperties()).filter(key =>
+    key === RETENTION_DELETION_OUTBOX_PROPERTY_KEY ||
+      key.startsWith(RETENTION_DELETION_OUTBOX_CHUNK_PREFIX),
+  );
+  if (keys.length > 0) {
+    keys.forEach(key => properties.deleteProperty(key));
+  }
+}
+
+/** Converts a report record into a JSON-safe durable representation. */
+function serializeDeletionReportRecord_(record) {
+  return {
+    messageId: String(record.messageId || ''),
+    subject: String(record.subject || '(no subject)'),
+    sender: String(record.sender || '(unknown sender)'),
+    receivedAt: new Date(record.receivedAt).toISOString(),
+    retentionLabel: String(record.retentionLabel || ''),
+    trashPermalink: String(record.trashPermalink || ''),
+  };
+}
+
+/** Converts a stored report record back to the format used by email builders. */
+function deserializeDeletionReportRecord_(record) {
+  return {
+    ...record,
+    receivedAt: new Date(record.receivedAt),
+  };
+}
+
+/** Persists a compressed deletion report without exceeding per-property limits. */
+function saveDeletionReportOutbox_(outbox) {
+  const serializable = {
+    schemaVersion: RETENTION_DELETION_OUTBOX_SCHEMA_VERSION,
+    id: String(outbox.id || Utilities.getUuid()),
+    state: outbox.state === 'ready' ? 'ready' : 'planned',
+    runDate: new Date(outbox.runDate).toISOString(),
+    availableUpdate: outbox.availableUpdate || null,
+    sentPartCount: Math.max(0, Number(outbox.sentPartCount) || 0),
+    records: outbox.records.map(serializeDeletionReportRecord_),
+  };
+  const compressed = Utilities.gzip(
+    Utilities.newBlob(JSON.stringify(serializable), 'application/json'),
+  );
+  const encoded = Utilities.base64EncodeWebSafe(compressed.getBytes());
+  if (encoded.length > RETENTION_DELETION_OUTBOX_MAX_ENCODED_CHARACTERS) {
+    throw new Error(
+      'The deletion report is too large to preserve safely. No messages were ' +
+        'moved to Trash. Reduce the number of expired messages and run again.',
+    );
+  }
+
+  clearDeletionReportOutbox_();
+  const properties = PropertiesService.getScriptProperties();
+  const chunks = chunkArray(
+    encoded.split(''),
+    RETENTION_DELETION_OUTBOX_CHUNK_SIZE,
+  ).map(chunk => chunk.join(''));
+  const values = {};
+  chunks.forEach((chunk, index) => {
+    values[`${RETENTION_DELETION_OUTBOX_CHUNK_PREFIX}${index}`] = chunk;
+  });
+  properties.setProperties(values, false);
+  properties.setProperty(
+    RETENTION_DELETION_OUTBOX_PROPERTY_KEY,
+    JSON.stringify({
+      schemaVersion: RETENTION_DELETION_OUTBOX_SCHEMA_VERSION,
+      chunkCount: chunks.length,
+      id: serializable.id,
+    }),
+  );
+  return serializable;
+}
+
+/** @return {?Object} Valid pending deletion report, or null when none exists. */
+function getDeletionReportOutbox_() {
+  const properties = PropertiesService.getScriptProperties();
+  const storedMetadata = properties.getProperty(
+    RETENTION_DELETION_OUTBOX_PROPERTY_KEY,
+  );
+  if (!storedMetadata) {
+    return null;
+  }
+
+  try {
+    const metadata = JSON.parse(storedMetadata);
+    if (
+      !isConfigurationObject(metadata) ||
+      metadata.schemaVersion !== RETENTION_DELETION_OUTBOX_SCHEMA_VERSION ||
+      !Number.isInteger(metadata.chunkCount) ||
+      metadata.chunkCount < 1
+    ) {
+      throw new Error('invalid deletion-report metadata');
+    }
+    let encoded = '';
+    for (let index = 0; index < metadata.chunkCount; index += 1) {
+      const chunk = properties.getProperty(
+        `${RETENTION_DELETION_OUTBOX_CHUNK_PREFIX}${index}`,
+      );
+      if (!chunk) {
+        throw new Error(`missing deletion-report chunk ${index}`);
+      }
+      encoded += chunk;
+    }
+    const json = Utilities.ungzip(
+      Utilities.newBlob(Utilities.base64DecodeWebSafe(encoded)),
+    ).getDataAsString();
+    const parsed = JSON.parse(json);
+    if (
+      !isConfigurationObject(parsed) ||
+      parsed.schemaVersion !== RETENTION_DELETION_OUTBOX_SCHEMA_VERSION ||
+      !['planned', 'ready'].includes(parsed.state) ||
+      !Array.isArray(parsed.records) ||
+      typeof parsed.runDate !== 'string'
+    ) {
+      throw new Error('invalid deletion-report payload');
+    }
+    return {
+      ...parsed,
+      records: parsed.records.map(deserializeDeletionReportRecord_),
+    };
+  } catch (error) {
+    throw new Error(
+      `The pending deletion report could not be recovered: ` +
+        getRuntimeErrorMessage(error),
+    );
+  }
+}
+
+/** Determines which planned messages reached Trash before an interrupted run. */
+function finalizePlannedDeletionReport_(outbox) {
+  const records = outbox.records.filter(record => {
+    try {
+      const message = executeGmailApiReadWithRetry_(() =>
+        Gmail.Users.Messages.get('me', record.messageId, { format: 'minimal' }),
+      );
+      return Array.isArray(message.labelIds) && message.labelIds.includes('TRASH');
+    } catch (error) {
+      if (/\b404\b|not found/i.test(getRuntimeErrorMessage(error))) {
+        return true;
+      }
+      throw error;
+    }
+  });
+  return saveDeletionReportOutbox_({
+    ...outbox,
+    state: 'ready',
+    sentPartCount: 0,
+    records,
+  });
+}
+
+/** Delivers and clears a pending report, resuming after its last completed part. */
+function deliverDeletionReportOutbox_() {
+  let outbox = getDeletionReportOutbox_();
+  if (!outbox) {
+    return 0;
+  }
+  if (outbox.state === 'planned') {
+    outbox = finalizePlannedDeletionReport_(outbox);
+  }
+  if (outbox.records.length === 0) {
+    clearDeletionReportOutbox_();
+    return 0;
+  }
+
+  const sentCount = sendDeletionSummaries(
+    outbox.records,
+    new Date(outbox.runDate),
+    outbox.availableUpdate,
+    outbox.sentPartCount,
+    sentPartCount => {
+      outbox = saveDeletionReportOutbox_({ ...outbox, sentPartCount });
+    },
+  );
+  clearDeletionReportOutbox_();
+  return sentCount;
+}
+
 /**
  * Compares Gmail label names after normalizing separators, spacing, and case.
  *
@@ -5324,6 +5512,7 @@ function executeGmailRetention_() {
     const activeUserEmail = Session.getActiveUser().getEmail();
     const notificationRecipient = getNotificationRecipient();
     retryPendingManagedSystemEmails_();
+    deliverDeletionReportOutbox_();
 
     verboseLog('SESSION', () => ({
       effectiveUserEmail,
@@ -5562,6 +5751,7 @@ function executeGmailRetention_() {
       const messageRecords = isSystemNotification
         ? []
         : activeMessages.map(message => ({
+            messageId: message.getId(),
             subject: message.getSubject() || '(no subject)',
             sender: message.getFrom() || '(unknown sender)',
             receivedAt: message.getDate(),
@@ -5586,8 +5776,33 @@ function executeGmailRetention_() {
           excludedArchiveMessageIds,
         )
       : createEmptyArchiveResult();
+    const plannedReportRecords = pendingDeletions.flatMap(item =>
+      item.isSystemNotification ? [] : item.messageRecords,
+    );
+    if (plannedReportRecords.length > 0) {
+      saveDeletionReportOutbox_({
+        state: 'planned',
+        runDate: now,
+        availableUpdate,
+        sentPartCount: 0,
+        records: plannedReportRecords,
+      });
+    }
     const deletionResult = movePendingMessagesToTrash(pendingDeletions);
     const deletedMessageRecords = deletionResult.deletedMessageRecords;
+    if (plannedReportRecords.length > 0) {
+      if (deletedMessageRecords.length > 0) {
+        saveDeletionReportOutbox_({
+          state: 'ready',
+          runDate: now,
+          availableUpdate,
+          sentPartCount: 0,
+          records: deletedMessageRecords,
+        });
+      } else {
+        clearDeletionReportOutbox_();
+      }
+    }
 
     // Delete the temporary internal label when no active notification uses it.
     deleteSystemNotificationLabelIfUnused();
@@ -5597,7 +5812,7 @@ function executeGmailRetention_() {
      * deletion is an expired system notification, no new notification is sent.
      */
     const summaryEmailCount = deletedMessageRecords.length > 0
-      ? sendDeletionSummaries(deletedMessageRecords, now, availableUpdate)
+      ? deliverDeletionReportOutbox_()
       : 0;
     const updateOnlyEmailCount = deletedMessageRecords.length === 0
       ? sendUpdateOnlyNotificationIfNeeded(availableUpdate, now)
@@ -6646,9 +6861,17 @@ function sendManagedSystemEmail(context, subject, plainBody, htmlBody) {
  * @param {Array} records Deleted message records.
  * @param {Date} runDate Date the retention run occurred.
  * @param {Object|null} availableUpdate Newer GitHub release metadata.
- * @return {number} Number of summary emails sent.
+ * @param {number=} completedPartCount Previously delivered parts to skip.
+ * @param {Function=} onPartSent Called with the total completed part count.
+ * @return {number} Number of summary emails sent by this call.
  */
-function sendDeletionSummaries(records, runDate, availableUpdate) {
+function sendDeletionSummaries(
+  records,
+  runDate,
+  availableUpdate,
+  completedPartCount = 0,
+  onPartSent = null,
+) {
   verboseLog('NOTIFICATION', {
     recordCount: records.length,
     runDate: runDate.toISOString(),
@@ -6676,8 +6899,13 @@ function sendDeletionSummaries(records, runDate, availableUpdate) {
     records,
     RETENTION_CONFIG.MAX_ROWS_PER_NOTIFICATION,
   );
+  const firstPartIndex = Math.min(
+    chunks.length,
+    Math.max(0, Number(completedPartCount) || 0),
+  );
 
-  chunks.forEach((chunk, index) => {
+  chunks.slice(firstPartIndex).forEach((chunk, offset) => {
+    const index = firstPartIndex + offset;
     const partNumber = index + 1;
     const totalParts = chunks.length;
     const formattedRunDate = Utilities.formatDate(
@@ -6733,9 +6961,12 @@ function sendDeletionSummaries(records, runDate, availableUpdate) {
       messageId: sentMessage.getId(),
       threadId: sentMessage.getThread().getId(),
     });
+    if (typeof onPartSent === 'function') {
+      onPartSent(index + 1);
+    }
   });
 
-  return chunks.length;
+  return chunks.length - firstPartIndex;
 }
 
 /**
