@@ -3522,9 +3522,11 @@ function applyRetentionSidebarSettings_(request, confirmExistingTriggers) {
   }
 
   const priorSchedule = getRetentionScheduleConfiguration();
+  const priorTriggerStatus = getRetentionTriggerStatus();
   const settingsChanged = JSON.stringify(copyRetentionSettings(getRetentionSettings())) !==
     JSON.stringify(copyRetentionSettings(request.settings));
-  const scheduleChanged = !priorSchedule.configured ||
+  const scheduleChanged = priorTriggerStatus.needsRepair ||
+    !priorSchedule.configured ||
     !retentionSchedulePreferencesEqual(
       priorSchedule.preferences,
       request.preferences,
