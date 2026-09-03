@@ -419,10 +419,10 @@ function readGmailApiThreadResource_(threadId) {
     return validateGmailApiThreadResource_(metadataThread, threadId);
   } catch (error) {
     metadataError = error;
-    verboseLog('THREAD METADATA READ FALLBACK', {
+    verboseLog('THREAD METADATA READ FALLBACK', () => ({
       threadId,
       error: getRuntimeErrorMessage(error),
-    });
+    }));
   }
 
   try {
@@ -501,10 +501,10 @@ function createGmailApiThread_(threadId) {
       try {
         Gmail.Users.Threads.untrash('me', threadId);
       } catch (error) {
-        verboseLog('THREAD UNTRASH SKIPPED', {
+        verboseLog('THREAD UNTRASH SKIPPED', () => ({
           threadId,
           error: error.message,
-        });
+        }));
       }
       Gmail.Users.Threads.modify(
         { addLabelIds: ['INBOX'], removeLabelIds: ['SPAM'] },
@@ -2566,7 +2566,7 @@ function getRetentionFilterCleanupHistory_() {
     }
     return parsed.items;
   } catch (error) {
-    verboseLog('FILTER CLEANUP HISTORY READ FAILURE', String(error));
+    verboseLog('FILTER CLEANUP HISTORY READ FAILURE', () => (String(error)));
     return [];
   }
 }
@@ -2623,7 +2623,7 @@ function getRetentionFilterCleanupForAdmin_() {
   } catch (error) {
     analysis = { totalFilterCount: 0, suggestions: [] };
     errorMessage = error && error.message ? error.message : String(error);
-    verboseLog('FILTER CLEANUP ANALYSIS FAILURE', errorMessage);
+    verboseLog('FILTER CLEANUP ANALYSIS FAILURE', () => (errorMessage));
   }
   return {
     error: errorMessage,
@@ -2682,7 +2682,7 @@ function createAndVerifyRetentionFilter_(resource) {
     try {
       removeRetentionGmailFilter_(created.id);
     } catch (cleanupError) {
-      verboseLog('FILTER CLEANUP REPLACEMENT ROLLBACK FAILURE', cleanupError);
+      verboseLog('FILTER CLEANUP REPLACEMENT ROLLBACK FAILURE', () => (cleanupError));
     }
     throw new Error(
       'Gmail did not preserve the proposed replacement filter exactly. ' +
@@ -2746,7 +2746,7 @@ function mergeRetentionFiltersFromAdmin(request) {
       } catch (rollbackError) {
         rollbackMessage = ' The untracked replacement could not be removed; ' +
           'review Gmail filters before retrying.';
-        verboseLog('FILTER CLEANUP BACKUP ROLLBACK FAILURE', rollbackError);
+        verboseLog('FILTER CLEANUP BACKUP ROLLBACK FAILURE', () => (rollbackError));
       }
       throw new Error(
         `The filter backup could not be saved: ${error.message}.` +
@@ -4497,7 +4497,7 @@ function getAdminPageUrl() {
   } catch (error) {
     verboseLog(
       'ADMIN PAGE URL CACHE READ FAILURE',
-      error && error.stack ? error.stack : String(error),
+      () => (error && error.stack ? error.stack : String(error)),
     );
   }
 
@@ -4543,7 +4543,7 @@ function storeAdminPageUrl_(value) {
   } catch (error) {
     verboseLog(
       'ADMIN PAGE URL CACHE WRITE FAILURE',
-      error && error.stack ? error.stack : String(error),
+      () => (error && error.stack ? error.stack : String(error)),
     );
   }
   return url;
@@ -4605,7 +4605,7 @@ function deleteAdminPageSetupTriggers_() {
     } catch (error) {
       verboseLog(
         'ADMIN PAGE SETUP TRIGGER DELETE FAILURE',
-        error && error.stack ? error.stack : String(error),
+        () => (error && error.stack ? error.stack : String(error)),
       );
     }
   });
@@ -4757,7 +4757,7 @@ function rememberCurrentAdminPageUrl_() {
   } catch (error) {
     verboseLog(
       'ADMIN PAGE URL REGISTRATION FAILURE',
-      error && error.stack ? error.stack : String(error),
+      () => (error && error.stack ? error.stack : String(error)),
     );
     return '';
   }
@@ -4929,17 +4929,17 @@ function getLatestPublishedRelease() {
   if (cachedValue) {
     try {
       const cachedResult = JSON.parse(cachedValue);
-      verboseLog('UPDATE CHECK CACHE HIT', cachedResult);
+      verboseLog('UPDATE CHECK CACHE HIT', () => (cachedResult));
       return cachedResult.release || null;
     } catch (error) {
-      verboseLog('UPDATE CHECK CACHE PARSE FAILURE', String(error));
+      verboseLog('UPDATE CHECK CACHE PARSE FAILURE', () => (String(error)));
       cache.remove(cacheKey);
     }
   }
 
   try {
     const apiUrl = getLatestReleaseApiUrl();
-    verboseLog('UPDATE CHECK REQUEST', apiUrl);
+    verboseLog('UPDATE CHECK REQUEST', () => (apiUrl));
 
     const response = UrlFetchApp.fetch(apiUrl, {
       method: 'get',
@@ -4955,10 +4955,10 @@ function getLatestPublishedRelease() {
     const responseCode = response.getResponseCode();
     const responseText = response.getContentText();
 
-    verboseLog('UPDATE CHECK RESPONSE', {
+    verboseLog('UPDATE CHECK RESPONSE', () => ({
       responseCode,
       responsePreview: responseText.slice(0, 500),
-    });
+    }));
 
     if (responseCode !== 200) {
       console.warn(
@@ -5028,17 +5028,17 @@ function getAvailableUpdate() {
       latestVersion,
       installedVersion,
     );
-    verboseLog('UPDATE CHECK COMPARISON', {
+    verboseLog('UPDATE CHECK COMPARISON', () => ({
       installedVersion: installedVersion.normalized,
       latestVersion: latestVersion.normalized,
       comparison,
-    });
+    }));
 
     return comparison > 0 ? latestRelease : null;
   } catch (error) {
     verboseLog(
       'UPDATE CHECK COMPARISON FAILURE',
-      error && error.stack ? error.stack : String(error),
+      () => (error && error.stack ? error.stack : String(error)),
     );
     return null;
   }
@@ -5607,20 +5607,20 @@ function executeGmailRetention_() {
     const initializedLabels = initializeDefaultRetentionLabels();
     verboseLog(
       'INITIALIZATION',
-      `initializeDefaultRetentionLabels() returned ${initializedLabels.length} label(s).`,
+      () => (`initializeDefaultRetentionLabels() returned ${initializedLabels.length} label(s).`),
     );
     verboseLabelSnapshot('LABELS AFTER INITIALIZATION');
 
     const discoveredRetentionLabels = discoverRetentionLabels(initializedLabels);
     verboseLog(
       'DISCOVERY',
-      `Discovered ${discoveredRetentionLabels.length} valid retention policy label(s).`,
+      () => (`Discovered ${discoveredRetentionLabels.length} valid retention policy label(s).`),
     );
     const systemNotificationLabel = GmailApiApp.getUserLabelByName(
       getSystemNotificationLabelName(),
     );
 
-    verboseLog('SYSTEM LABEL LOOKUP', describeLabel(systemNotificationLabel));
+    verboseLog('SYSTEM LABEL LOOKUP', () => (describeLabel(systemNotificationLabel)));
 
     if (
       discoveredRetentionLabels.length === 0 &&
@@ -5664,14 +5664,14 @@ function executeGmailRetention_() {
       discoveredRetentionLabels,
       systemNotificationLabel,
     );
-    verboseLog('THREAD COLLECTION', `Collected ${threadMap.size} unique thread(s).`);
+    verboseLog('THREAD COLLECTION', () => (`Collected ${threadMap.size} unique thread(s).`));
     preflightGmailApiThreads_(threadMap);
     const pendingDeletions = [];
     const excludedArchiveMessageIds = new Set();
     let removedRetentionLabelCount = 0;
 
     for (const thread of threadMap.values()) {
-      verboseLog('THREAD', `Processing thread ${thread.getId()}.`);
+      verboseLog('THREAD', () => (`Processing thread ${thread.getId()}.`));
       const threadLabels = thread.getLabels();
       const threadIsInTrash = thread.isInTrash();
       const messages = thread.getMessages();
@@ -5781,30 +5781,30 @@ function executeGmailRetention_() {
       // Keep exactly one valid retention label to eliminate conflicting UI state.
       for (const policy of policies) {
         if (policy.label.getId() !== winningPolicy.label.getId()) {
-          verboseLog('REMOVE REDUNDANT LABEL', {
+          verboseLog('REMOVE REDUNDANT LABEL', () => ({
             threadId: thread.getId(),
             removedLabel: policy.labelName,
             retainedLabel: winningPolicy.labelName,
-          });
+          }));
           policy.label.removeFromThread(thread);
           removedRetentionLabelCount += 1;
         }
       }
 
       if (now.getTime() < winningPolicy.expiresAt.getTime()) {
-        verboseLog('RETENTION DECISION', {
+        verboseLog('RETENTION DECISION', () => ({
           threadId: thread.getId(),
           decision: 'KEEP',
           expiresAt: winningPolicy.expiresAt.toISOString(),
-        });
+        }));
         continue;
       }
 
-      verboseLog('RETENTION DECISION', {
+      verboseLog('RETENTION DECISION', () => ({
         threadId: thread.getId(),
         decision: 'MOVE_TO_TRASH',
         expiredAt: winningPolicy.expiresAt.toISOString(),
-      });
+      }));
 
       /*
        * Capture all message-level details before moving the thread to Trash.
@@ -5948,7 +5948,7 @@ function initializeDefaultRetentionLabels() {
   verboseLog('INITIALIZATION', 'Checking whether starter labels are required.');
   const rootLabelName = getRootLabelName();
   const rootLabel = findUserLabelByName(rootLabelName);
-  verboseLog('INITIALIZATION ROOT LOOKUP', describeLabel(rootLabel));
+  verboseLog('INITIALIZATION ROOT LOOKUP', () => (describeLabel(rootLabel)));
 
   if (rootLabel) {
     console.log(
@@ -5964,19 +5964,19 @@ function initializeDefaultRetentionLabels() {
    */
   verboseLog(
     'INITIALIZATION',
-    `No configured root label (${rootLabelName}) was found. ` +
-      'Starter-label creation will begin.',
+    () => (`No configured root label (${rootLabelName}) was found. ` +
+      'Starter-label creation will begin.'),
   );
 
   const requestedLabelNames = [
     rootLabelName,
     ...getDefaultRetentionLabelNames(),
   ];
-  verboseLog('INITIALIZATION REQUESTED LABELS', requestedLabelNames);
+  verboseLog('INITIALIZATION REQUESTED LABELS', () => (requestedLabelNames));
   const createdLabels = requestedLabelNames.map(labelName => {
-    verboseLog('INITIALIZATION CREATE', `Requesting label ${labelName}.`);
+    verboseLog('INITIALIZATION CREATE', () => (`Requesting label ${labelName}.`));
     const label = getOrCreateLabel(labelName);
-    verboseLog('INITIALIZATION CREATE RESULT', describeLabel(label));
+    verboseLog('INITIALIZATION CREATE RESULT', () => (describeLabel(label)));
     return label;
   });
 
@@ -6034,30 +6034,30 @@ function runRetentionLabelDiagnostics() {
  * @return {{label: GmailLabel, amount: number, unit: string, labelName: string}[]}
  */
 function discoverRetentionLabels(initializedLabels = []) {
-  verboseLog('DISCOVERY', {
+  verboseLog('DISCOVERY', () => ({
     initializedLabelCount: initializedLabels.length,
     initializedLabels: initializedLabels.map(label => label.getName()),
-  });
+  }));
   const labelsByName = new Map();
 
   const gmailLabels = GmailApiApp.getUserLabels();
-  verboseLog('DISCOVERY RAW GMAIL LABELS', gmailLabels.map(describeLabel));
+  verboseLog('DISCOVERY RAW GMAIL LABELS', () => (gmailLabels.map(describeLabel)));
 
   for (const label of [
     ...gmailLabels,
     ...initializedLabels,
   ]) {
     const normalizedName = normalizeRetentionLabelName(label.getName());
-    verboseLog('DISCOVERY NORMALIZE LABEL', {
+    verboseLog('DISCOVERY NORMALIZE LABEL', () => ({
       rawName: label.getName(),
       normalizedName,
       id: safeGetLabelId(label),
-    });
+    }));
     labelsByName.set(normalizedName.toLowerCase(), label);
   }
 
   const allLabels = [...labelsByName.values()];
-  verboseLog('DISCOVERY UNIQUE LABEL COUNT', allLabels.length);
+  verboseLog('DISCOVERY UNIQUE LABEL COUNT', () => (allLabels.length));
   const policies = allLabels
     .map(label => parseRetentionLabel(label))
     .filter(policy => policy !== null);
@@ -6102,12 +6102,12 @@ function parseRetentionLabel(label) {
   const match = normalizedLabelName.match(getRetentionLabelPattern());
 
   if (!match) {
-    verboseLog('PARSE LABEL', {
+    verboseLog('PARSE LABEL', () => ({
       labelName,
       normalizedLabelName,
       valid: false,
       reason: 'Does not match the configured root label and retention format',
-    });
+    }));
     return null;
   }
 
@@ -6116,19 +6116,19 @@ function parseRetentionLabel(label) {
   const unit = RETENTION_CONFIG.UNIT_ALIASES[unitAlias];
 
   if (!unit) {
-    verboseLog('PARSE LABEL', {
+    verboseLog('PARSE LABEL', () => ({
       labelName,
       normalizedLabelName,
       valid: false,
       reason: 'Unrecognized retention unit alias',
       unitAlias,
-    });
+    }));
     return null;
   }
 
   // Zero-length periods are intentionally rejected.
   if (!Number.isSafeInteger(amount) || amount <= 0) {
-    verboseLog('PARSE LABEL', {
+    verboseLog('PARSE LABEL', () => ({
       labelName,
       normalizedLabelName,
       valid: false,
@@ -6136,18 +6136,18 @@ function parseRetentionLabel(label) {
       amount,
       unitAlias,
       unit,
-    });
+    }));
     return null;
   }
 
-  verboseLog('PARSE LABEL', {
+  verboseLog('PARSE LABEL', () => ({
     labelName,
     normalizedLabelName,
     valid: true,
     amount,
     unitAlias,
     canonicalUnit: unit,
-  });
+  }));
 
   return {
     label,
@@ -6185,10 +6185,10 @@ function normalizeRetentionLabelName(value) {
  * @return {Map<string, GmailThread>} Map keyed by Gmail thread ID.
  */
 function collectUniqueThreads(retentionPolicies, systemNotificationLabel) {
-  verboseLog('THREAD COLLECTION INPUT', {
+  verboseLog('THREAD COLLECTION INPUT', () => ({
     retentionPolicies: retentionPolicies.map(policy => policy.labelName),
     systemNotificationLabel: describeLabel(systemNotificationLabel),
-  });
+  }));
   const threadMap = new Map();
 
   for (const policy of retentionPolicies) {
@@ -6210,7 +6210,7 @@ function collectUniqueThreads(retentionPolicies, systemNotificationLabel) {
 function preflightGmailApiThreads_(threadMap) {
   verboseLog(
     'THREAD PREFLIGHT',
-    `Validating ${threadMap.size} conversation(s) before processing.`,
+    () => (`Validating ${threadMap.size} conversation(s) before processing.`),
   );
   for (const thread of threadMap.values()) {
     try {
@@ -6248,10 +6248,10 @@ function preflightGmailApiThreads_(threadMap) {
  */
 function addLabelThreadsToMap(label, threadMap) {
   let start = 0;
-  verboseLog('LABEL THREAD ENUMERATION', {
+  verboseLog('LABEL THREAD ENUMERATION', () => ({
     label: describeLabel(label),
     pageSize: RETENTION_CONFIG.THREAD_PAGE_SIZE,
-  });
+  }));
 
   while (true) {
     const threads = label.getThreads(
@@ -6259,12 +6259,12 @@ function addLabelThreadsToMap(label, threadMap) {
       RETENTION_CONFIG.THREAD_PAGE_SIZE,
     );
 
-    verboseLog('LABEL THREAD PAGE', {
+    verboseLog('LABEL THREAD PAGE', () => ({
       labelName: label.getName(),
       start,
       returnedThreadCount: threads.length,
       threadIds: threads.map(thread => thread.getId()),
-    });
+    }));
 
     for (const thread of threads) {
       const existingThread = threadMap.get(thread.getId());
@@ -6349,7 +6349,7 @@ function chooseWinningPolicy(
   isSystemNotification,
   timeZone,
 ) {
-  verboseLog('POLICY COMPARISON INPUT', {
+  verboseLog('POLICY COMPARISON INPUT', () => ({
     newestMessageDate: newestMessageDate.toISOString(),
     isSystemNotification,
     policies: policies.map(policy => ({
@@ -6357,7 +6357,7 @@ function chooseWinningPolicy(
       amount: policy.amount,
       unit: policy.unit,
     })),
-  });
+  }));
 
   const evaluatedPolicies = policies.map(policy => ({
     ...policy,
@@ -6369,12 +6369,12 @@ function chooseWinningPolicy(
     ),
   }));
 
-  verboseLog('POLICY COMPARISON EVALUATED', evaluatedPolicies.map(policy => ({
+  verboseLog('POLICY COMPARISON EVALUATED', () => (evaluatedPolicies.map(policy => ({
     labelName: policy.labelName,
     amount: policy.amount,
     unit: policy.unit,
     expiresAt: policy.expiresAt.toISOString(),
-  })));
+  }))));
 
   if (isSystemNotification) {
     const requiredLabelName = getNotificationRetentionLabelName();
@@ -6388,11 +6388,11 @@ function chooseWinningPolicy(
       );
     }
 
-    verboseLog('POLICY COMPARISON WINNER', {
+    verboseLog('POLICY COMPARISON WINNER', () => ({
       labelName: requiredPolicy.labelName,
       expiresAt: requiredPolicy.expiresAt.toISOString(),
       reason: 'Configured system-notification policy is forced to win',
-    });
+    }));
     return requiredPolicy;
   }
 
@@ -6415,10 +6415,10 @@ function chooseWinningPolicy(
     a.labelName.localeCompare(b.labelName),
   );
 
-  verboseLog('POLICY COMPARISON WINNER', {
+  verboseLog('POLICY COMPARISON WINNER', () => ({
     labelName: evaluatedPolicies[0].labelName,
     expiresAt: evaluatedPolicies[0].expiresAt.toISOString(),
-  });
+  }));
   return evaluatedPolicies[0];
 }
 
@@ -6450,11 +6450,11 @@ function getZonedDateTimeParts_(date, timeZone) {
  */
 function addRetentionPeriod(startDate, amount, unit, timeZone) {
   const result = new Date(startDate.getTime());
-  verboseLog('ADD RETENTION PERIOD', {
+  verboseLog('ADD RETENTION PERIOD', () => ({
     startDate: startDate.toISOString(),
     amount,
     unit,
-  });
+  }));
 
   switch (unit) {
     case 'min':
@@ -6724,10 +6724,10 @@ function archiveRetentionLabeledInboxMessages(
           candidateMessages.set(message.id, message);
         }
       });
-      verboseLog('ARCHIVE LABEL LOOKUP', {
+      verboseLog('ARCHIVE LABEL LOOKUP', () => ({
         labelName,
         directlyLabeledInboxMessageCount: messages.length,
-      });
+      }));
     } catch (error) {
       result.lookupFailureCount += 1;
       const message =
@@ -6760,11 +6760,11 @@ function archiveRetentionLabeledInboxMessages(
 
       result.archivedMessageCount += batch.length;
       batch.forEach(message => archivedThreadIds.add(message.threadId));
-      verboseLog('ARCHIVE BATCH', {
+      verboseLog('ARCHIVE BATCH', () => ({
         batchSize: batch.length,
         messageIds: batch.map(message => message.id),
         threadIds: [...new Set(batch.map(message => message.threadId))],
-      });
+      }));
     } catch (error) {
       result.failedMessageCount += batch.length;
       const message =
@@ -6804,11 +6804,11 @@ function movePendingMessagesToTrash(pendingDeletions) {
     });
   }
 
-  verboseLog('TRASH', {
+  verboseLog('TRASH', () => ({
     pendingThreadCount: pendingDeletions.length,
     pendingMessageCount: pendingMessages.length,
     threadIds: pendingDeletions.map(item => item.thread.getId()),
-  });
+  }));
   const deletedMessageRecords = [];
   const movedThreadIds = new Set();
   const systemNotificationThreads = new Map();
@@ -6952,13 +6952,13 @@ function sendManagedSystemEmail(context, subject, plainBody, htmlBody) {
     );
   }
 
-  verboseLog('SYSTEM EMAIL SENT', {
+  verboseLog('SYSTEM EMAIL SENT', () => ({
     subject,
     messageId: sentMessage.getId(),
     threadId: notificationThread.getId(),
     systemLabel: context.systemLabel.getName(),
     retentionLabel: context.notificationRetentionLabel.getName(),
-  });
+  }));
   return sentMessage;
 }
 
@@ -6981,14 +6981,14 @@ function sendDeletionSummaries(
   completedPartCount = 0,
   onPartSent = null,
 ) {
-  verboseLog('NOTIFICATION', {
+  verboseLog('NOTIFICATION', () => ({
     recordCount: records.length,
     runDate: runDate.toISOString(),
-  });
+  }));
   const deliveryContext = getSystemNotificationDeliveryContext();
   const timeZone = getConfiguredRetentionTimeZone();
   const adminPageUrl = getAdminPageUrl();
-  verboseLog('NOTIFICATION LABELS', {
+  verboseLog('NOTIFICATION LABELS', () => ({
     recipient: deliveryContext.recipient,
     systemLabel: describeLabel(deliveryContext.systemLabel),
     notificationRetentionLabel: describeLabel(
@@ -6997,7 +6997,7 @@ function sendDeletionSummaries(
     timeZone,
     adminPageUrl,
     availableUpdate,
-  });
+  }));
 
   // Present newest deleted messages first.
   records.sort(
@@ -7053,12 +7053,12 @@ function sendDeletionSummaries(
      * GmailDraft.send() returns the sent GmailMessage, allowing the script to
      * label, place, and mark the generated notification without searching for it.
      */
-    verboseLog('NOTIFICATION SEND', {
+    verboseLog('NOTIFICATION SEND', () => ({
       partNumber,
       totalParts,
       subject,
       rowCount: chunk.length,
-    });
+    }));
 
     const sentMessage = sendManagedSystemEmail(
       deliveryContext,
@@ -7066,10 +7066,10 @@ function sendDeletionSummaries(
       plainBody,
       htmlBody,
     );
-    verboseLog('NOTIFICATION SENT', {
+    verboseLog('NOTIFICATION SENT', () => ({
       messageId: sentMessage.getId(),
       threadId: sentMessage.getThread().getId(),
-    });
+    }));
     if (typeof onPartSent === 'function') {
       onPartSent(index + 1);
     }
@@ -7091,9 +7091,9 @@ function sendUpdateOnlyNotificationIfNeeded(availableUpdate, runDate) {
   if (!availableUpdate || hasSentUpdateOnlyNotification(availableUpdate)) {
     verboseLog(
       'UPDATE-ONLY NOTIFICATION',
-      availableUpdate
+      () => (availableUpdate
         ? `Version ${availableUpdate.version} was already announced.`
-        : 'No newer release is available.',
+        : 'No newer release is available.'),
     );
     return 0;
   }
@@ -7515,11 +7515,11 @@ function getOrCreateLabel(labelName) {
   let currentPath = '';
   let deepestLabel = null;
 
-  verboseLog('GET OR CREATE LABEL', {
+  verboseLog('GET OR CREATE LABEL', () => ({
     requestedName: labelName,
     canonicalName,
     pathSegments,
-  });
+  }));
 
   /*
    * Create each level in order. For a path such as Root/7d, this verifies or
@@ -7532,16 +7532,16 @@ function getOrCreateLabel(labelName) {
     }
 
     currentPath = currentPath ? `${currentPath}/${segment}` : segment;
-    verboseLog('GET OR CREATE LABEL SEGMENT', { segment, currentPath });
+    verboseLog('GET OR CREATE LABEL SEGMENT', () => ({ segment, currentPath }));
 
     deepestLabel = findUserLabelByName(currentPath);
 
     if (deepestLabel) {
-      verboseLog('GET OR CREATE LABEL FOUND', describeLabel(deepestLabel));
+      verboseLog('GET OR CREATE LABEL FOUND', () => (describeLabel(deepestLabel)));
       continue;
     }
 
-    verboseLog('GET OR CREATE LABEL CREATE ATTEMPT', currentPath);
+    verboseLog('GET OR CREATE LABEL CREATE ATTEMPT', () => (currentPath));
     try {
       deepestLabel = GmailApiApp.createLabel(currentPath);
     } catch (error) {
@@ -7552,7 +7552,7 @@ function getOrCreateLabel(labelName) {
       throw error;
     }
 
-    verboseLog('GET OR CREATE LABEL CREATE RETURN', describeLabel(deepestLabel));
+    verboseLog('GET OR CREATE LABEL CREATE RETURN', () => (describeLabel(deepestLabel)));
 
     /*
      * Gmail normally exposes a newly created label immediately. Retry the lookup
@@ -7562,11 +7562,11 @@ function getOrCreateLabel(labelName) {
     let verifiedLabel = null;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       verifiedLabel = findUserLabelByName(currentPath);
-      verboseLog('GET OR CREATE LABEL VERIFY', {
+      verboseLog('GET OR CREATE LABEL VERIFY', () => ({
         currentPath,
         attempt,
         result: describeLabel(verifiedLabel),
-      });
+      }));
 
       if (verifiedLabel) {
         break;
@@ -7585,7 +7585,7 @@ function getOrCreateLabel(labelName) {
     deepestLabel = verifiedLabel;
   }
 
-  verboseLog('GET OR CREATE LABEL COMPLETE', describeLabel(deepestLabel));
+  verboseLog('GET OR CREATE LABEL COMPLETE', () => (describeLabel(deepestLabel)));
   return deepestLabel;
 }
 
@@ -7597,7 +7597,7 @@ function getOrCreateLabel(labelName) {
  */
 function findUserLabelByName(labelName) {
   const normalizedTarget = normalizeRetentionLabelName(labelName).toLowerCase();
-  verboseLog('FIND LABEL', { labelName, normalizedTarget });
+  verboseLog('FIND LABEL', () => ({ labelName, normalizedTarget }));
 
   const match = GmailApiApp.getUserLabelByName(labelName);
   verboseLog('FIND LABEL RESULT', () => describeLabel(match));
@@ -7679,7 +7679,7 @@ function verboseLabelSnapshot(step) {
     throw error;
   }
 
-  verboseLog(step, {
+  verboseLog(step, () => ({
     count: labels.length,
     labels: labels.map(label => ({
       id: safeGetLabelId(label),
@@ -7687,7 +7687,7 @@ function verboseLabelSnapshot(step) {
       normalizedName: normalizeRetentionLabelName(label.getName()),
       recognizedRetentionPolicy: Boolean(parseRetentionLabel(label)),
     })),
-  });
+  }));
 }
 
 /**
