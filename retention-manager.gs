@@ -608,23 +608,21 @@ const GmailApiApp = Object.freeze({
     invalidateGmailApiCaches_();
     return createGmailApiLabel_(resource);
   },
-  createDraft: (recipient, subject, plainBody, options) => ({
-    send: () => {
-      const mimeMessage = buildGmailApiMimeMessage_(
-        recipient,
-        subject,
-        plainBody,
-        options,
-      );
-      const raw = Utilities.base64EncodeWebSafe(
-        mimeMessage,
-        Utilities.Charset.UTF_8,
-      ).replace(/=+$/g, '');
-      const resource = Gmail.Users.Messages.send({ raw }, 'me');
-      gmailApiThreadCache.delete(resource.threadId);
-      return createGmailApiMessage_(resource);
-    },
-  }),
+  sendMessage: (recipient, subject, plainBody, options) => {
+    const mimeMessage = buildGmailApiMimeMessage_(
+      recipient,
+      subject,
+      plainBody,
+      options,
+    );
+    const raw = Utilities.base64EncodeWebSafe(
+      mimeMessage,
+      Utilities.Charset.UTF_8,
+    ).replace(/=+$/g, '');
+    const resource = Gmail.Users.Messages.send({ raw }, 'me');
+    gmailApiThreadCache.delete(resource.threadId);
+    return createGmailApiMessage_(resource);
+  },
 });
 
 /* Cached only for the current Apps Script execution. */
@@ -6511,7 +6509,7 @@ function getSystemNotificationDeliveryContext() {
  * @return {GmailMessage} Sent Gmail message.
  */
 function sendManagedSystemEmail(context, subject, plainBody, htmlBody) {
-  const sentMessage = GmailApiApp.createDraft(
+  const sentMessage = GmailApiApp.sendMessage(
     context.recipient,
     subject,
     plainBody,
@@ -6519,7 +6517,7 @@ function sendManagedSystemEmail(context, subject, plainBody, htmlBody) {
       htmlBody,
       name: RETENTION_CONFIG.APPLICATION_NAME,
     },
-  ).send();
+  );
   const notificationThread = sentMessage.getThread();
 
   context.systemLabel.addToThread(notificationThread);
