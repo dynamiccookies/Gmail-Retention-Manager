@@ -311,10 +311,13 @@ function listGmailApiLabelThreads_(labelId, start, max) {
   const targetCount = Math.max(0, start) + Math.max(0, max);
   const state = gmailApiLabelThreadIdCache.get(labelId) || {
     ids: [],
+    idSet: new Set(),
     nextPageToken: null,
-    started: false,
     complete: false,
   };
+  if (!state.idSet) {
+    state.idSet = new Set(state.ids);
+  }
 
   while (!state.complete && state.ids.length < targetCount) {
     const options = {
@@ -328,12 +331,12 @@ function listGmailApiLabelThreads_(labelId, start, max) {
     const response = Gmail.Users.Threads.list('me', options) || {};
     if (Array.isArray(response.threads)) {
       response.threads.forEach(resource => {
-        if (resource && resource.id && !state.ids.includes(resource.id)) {
+        if (resource && resource.id && !state.idSet.has(resource.id)) {
           state.ids.push(resource.id);
+          state.idSet.add(resource.id);
         }
       });
     }
-    state.started = true;
     state.nextPageToken = response.nextPageToken || null;
     state.complete = !state.nextPageToken;
   }
