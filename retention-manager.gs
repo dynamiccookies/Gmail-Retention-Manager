@@ -667,6 +667,24 @@ function copyRetentionSettings(settings) {
   };
 }
 
+/** Compares every recognized setting without depending on JSON key order. */
+function retentionSettingsEqual(first, second) {
+  if (!first || !second) {
+    return false;
+  }
+  return Object.keys(RETENTION_FACTORY_DEFAULTS).every(key => {
+    const firstValue = first[key];
+    const secondValue = second[key];
+    if (Array.isArray(firstValue) || Array.isArray(secondValue)) {
+      return Array.isArray(firstValue) &&
+        Array.isArray(secondValue) &&
+        firstValue.length === secondValue.length &&
+        firstValue.every((value, index) => value === secondValue[index]);
+    }
+    return firstValue === secondValue;
+  });
+}
+
 /**
  * Freezes the settings cached during one execution.
  *
@@ -3538,8 +3556,10 @@ function applyRetentionSidebarSettings_(request, confirmExistingTriggers) {
 
   const priorSchedule = getRetentionScheduleConfiguration();
   const priorTriggerStatus = getRetentionTriggerStatus();
-  const settingsChanged = JSON.stringify(copyRetentionSettings(getRetentionSettings())) !==
-    JSON.stringify(copyRetentionSettings(request.settings));
+  const settingsChanged = !retentionSettingsEqual(
+    getRetentionSettings(),
+    request.settings,
+  );
   const scheduleChanged = priorTriggerStatus.needsRepair ||
     !priorSchedule.configured ||
     !retentionSchedulePreferencesEqual(
