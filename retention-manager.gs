@@ -5203,6 +5203,7 @@ function executeGmailRetention_() {
     const availableUpdate = getAvailableUpdate();
     const effectiveUserEmail = Session.getEffectiveUser().getEmail();
     const activeUserEmail = Session.getActiveUser().getEmail();
+    const notificationRecipient = getNotificationRecipient();
 
     verboseLog('SESSION', () => ({
       effectiveUserEmail,
@@ -5435,6 +5436,9 @@ function executeGmailRetention_() {
        * The same permalink is used for every message because Gmail opens the
        * containing conversation, while sender/date/subject remain message-specific.
        */
+      const trashPermalink = isSystemNotification
+        ? ''
+        : buildTrashPermalink(thread, notificationRecipient);
       const messageRecords = isSystemNotification
         ? []
         : activeMessages.map(message => ({
@@ -5442,7 +5446,7 @@ function executeGmailRetention_() {
             sender: message.getFrom() || '(unknown sender)',
             receivedAt: message.getDate(),
             retentionLabel: winningPolicy.labelName,
-            trashPermalink: buildTrashPermalink(thread),
+            trashPermalink,
           }));
 
       pendingDeletions.push({
@@ -6101,11 +6105,11 @@ function addCalendarMonthsClamped(startDate, monthCount) {
  *   https://mail.google.com/mail/u/?authuser=user%40example.com#trash/THREAD_ID
  *
  * @param {GmailThread} thread Gmail conversation being moved to Trash.
+ * @param {string} accountEmail Owning Gmail address resolved once per run.
  * @return {string} Gmail URL scoped to the owning account and Trash route.
  */
-function buildTrashPermalink(thread) {
+function buildTrashPermalink(thread, accountEmail) {
   const threadId = thread.getId();
-  const accountEmail = getNotificationRecipient();
   const trashPermalink =
     'https://mail.google.com/mail/u/?authuser=' +
     `${encodeURIComponent(accountEmail)}#trash/${encodeURIComponent(threadId)}`;
