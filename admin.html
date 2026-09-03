@@ -582,7 +582,7 @@
         transform: scale(1.08);
       }
 
-      .system-label-color-option[aria-selected="true"]::after {
+      .system-label-color-option[aria-pressed="true"]::after {
         content: "\2713";
       }
 
@@ -1731,7 +1731,7 @@
                     id="systemLabelColorButton"
                     type="button"
                     aria-expanded="false"
-                    aria-haspopup="listbox"
+                    aria-controls="systemLabelColorPalette"
                   >
                     <span
                       class="system-label-color-swatch"
@@ -1743,7 +1743,7 @@
                   <div
                     class="system-label-color-palette"
                     id="systemLabelColorPalette"
-                    role="listbox"
+                    role="group"
                     aria-label="System-notification label color"
                     hidden
                   ></div>
@@ -2432,9 +2432,8 @@
             const button = document.createElement('button');
             button.className = 'system-label-color-option';
             button.type = 'button';
-            button.setAttribute('role', 'option');
             button.setAttribute('aria-label', color.name);
-            button.setAttribute('aria-selected', 'false');
+            button.setAttribute('aria-pressed', 'false');
             button.dataset.backgroundColor = color.backgroundColor;
             button.style.setProperty(
               '--label-color-background',
@@ -2462,7 +2461,7 @@
           .querySelectorAll('.system-label-color-option')
           .forEach(option => {
             option.setAttribute(
-              'aria-selected',
+              'aria-pressed',
               String(option.dataset.backgroundColor === backgroundColor),
             );
           });
@@ -2479,7 +2478,7 @@
         );
         if (shouldOpen) {
           const selected = elements.systemLabelColorPalette.querySelector(
-            '[aria-selected="true"]',
+            '[aria-pressed="true"]',
           );
           (selected || elements.systemLabelColorPalette.firstElementChild)?.focus();
         }
