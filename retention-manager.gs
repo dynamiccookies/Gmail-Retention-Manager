@@ -7131,9 +7131,7 @@ function getOrCreateLabel(labelName) {
 }
 
 /**
- * Finds a user label by full name. Gmail's direct lookup is attempted first,
- * followed by a case-insensitive scan so a differently capitalized Retention
- * root is not duplicated.
+ * Finds a user label by full name using the cached case-insensitive label lookup.
  *
  * @param {string} labelName Full label path.
  * @return {GmailLabel|null} Matching label, or null when absent.
@@ -7142,26 +7140,9 @@ function findUserLabelByName(labelName) {
   const normalizedTarget = normalizeRetentionLabelName(labelName).toLowerCase();
   verboseLog('FIND LABEL', { labelName, normalizedTarget });
 
-  const directMatch = GmailApiApp.getUserLabelByName(labelName);
-  verboseLog('FIND LABEL DIRECT RESULT', describeLabel(directMatch));
-
-  if (directMatch) {
-    return directMatch;
-  }
-
-  const userLabels = GmailApiApp.getUserLabels();
-  const scannedMatch = userLabels.find(label =>
-    normalizeRetentionLabelName(label.getName()).toLowerCase() ===
-      normalizedTarget,
-  ) || null;
-
-  verboseLog('FIND LABEL SCAN RESULT', {
-    searchedName: labelName,
-    scannedLabelCount: userLabels.length,
-    result: describeLabel(scannedMatch),
-  });
-
-  return scannedMatch;
+  const match = GmailApiApp.getUserLabelByName(labelName);
+  verboseLog('FIND LABEL RESULT', () => describeLabel(match));
+  return match;
 }
 
 /**
