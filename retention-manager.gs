@@ -2033,7 +2033,13 @@ function getRetentionRunSource(event) {
  * @param {Object} changes Runtime-state fields to replace.
  */
 function updateRetentionRuntimeStateSafely(changes) {
+  const lock = LockService.getUserLock();
+  let lockAcquired = false;
   try {
+    lockAcquired = lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS);
+    if (!lockAcquired) {
+      throw new Error('Timed out waiting to update runtime state.');
+    }
     const state = {
       ...getRetentionRuntimeState(),
       ...changes,
@@ -2049,6 +2055,10 @@ function updateRetentionRuntimeStateSafely(changes) {
       `Unable to update ${RETENTION_RUNTIME_STATE_PROPERTY_KEY}: ` +
         `${error && error.stack ? error.stack : error}`,
     );
+  } finally {
+    if (lockAcquired) {
+      lock.releaseLock();
+    }
   }
 }
 
