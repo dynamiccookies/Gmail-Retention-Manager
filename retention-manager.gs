@@ -5436,7 +5436,11 @@ function getDeletionReportOutbox_() {
       encoded += chunk;
     }
     const json = Utilities.ungzip(
-      Utilities.newBlob(Utilities.base64DecodeWebSafe(encoded)),
+      Utilities.newBlob(
+        Utilities.base64DecodeWebSafe(encoded),
+        'application/gzip',
+        'deletion-report.json.gz',
+      ),
     ).getDataAsString();
     const parsed = JSON.parse(json);
     if (
