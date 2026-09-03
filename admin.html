@@ -2046,6 +2046,7 @@
       let scheduleDirty = false;
       let backupBusy = false;
       let filterCleanupBusy = false;
+      let filterCleanupLoaded = false;
       let filterCleanupData = { suggestions: [], undo: { available: false } };
       let settingsBackups = { limit: 5, warning: null, items: [] };
       let selectedBackup = null;
@@ -2126,6 +2127,11 @@
           'click',
           refreshFilterCleanup,
         );
+        elements.filterCleanupPanel.addEventListener('toggle', () => {
+          if (elements.filterCleanupPanel.open && !filterCleanupLoaded) {
+            refreshFilterCleanup();
+          }
+        });
         elements.filterCleanupUndoButton.addEventListener(
           'click',
           undoLastFilterMerge,
@@ -2517,6 +2523,16 @@
       }
 
       function renderFilterCleanup(data) {
+        if (!data) {
+          elements.filterCleanupSummary.textContent =
+            'Open this panel to analyze eligible retention filters.';
+          elements.filterCleanupEmpty.hidden = true;
+          elements.filterCleanupList.textContent = '';
+          elements.filterCleanupUndo.hidden = true;
+          elements.filterCleanupBadge.hidden = true;
+          return;
+        }
+        filterCleanupLoaded = true;
         filterCleanupData = data && Array.isArray(data.suggestions)
           ? clone(data)
           : { totalFilterCount: 0, suggestions: [], undo: { available: false } };

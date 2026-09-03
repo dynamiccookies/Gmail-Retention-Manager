@@ -2832,7 +2832,7 @@ function getAdminPageData() {
     adminPreferences: getRetentionAdminPreferences(),
     runtime: getRetentionRuntimeState(),
     trigger,
-    filterCleanup: getRetentionFilterCleanupForAdmin_(),
+    filterCleanup: null,
   };
 }
 
