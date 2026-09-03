@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Retention Manager for Gmail automatically moves Gmail messages to Trash after retention periods defined by labels.">
+  <meta name="theme-color" content="#08101d">
+  <title>Retention Manager for Gmail™</title>
+  <link rel="icon" href="assets/retention-manager-icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="css/site.css">
+  <script src="js/site.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">Skip to content</a>
+  <header class="site-header">
+    <div class="nav-wrap">
+      <a class="brand" href="index.html" aria-label="Retention Manager for Gmail home"><img src="assets/retention-manager-icon.svg" alt=""><span>Retention Manager</span></a>
+      <button class="menu-toggle" type="button" data-menu-button aria-expanded="false" aria-controls="site-navigation">Menu</button>
+      <nav class="site-nav" id="site-navigation" data-menu aria-label="Primary navigation">
+        <a href="how-it-works.html">How it works</a><a href="features.html">Features</a><a href="privacy.html">Privacy</a><a href="support.html">Support</a><a class="button" href="https://github.com/dynamiccookies/Retention-Manager-for-Gmail/wiki/Installation">Install</a>
+      </nav>
+    </div>
+  </header>
+  <main id="main">
+    <section class="hero">
+      <div class="container hero-grid">
+        <div>
+          <div class="eyebrow">Label-based email retention</div>
+          <h1>Keep email only as long as you need it.</h1>
+          <p class="lead">Retention Manager for Gmail™ uses labels and a schedule you control to move expired messages to Trash—without sending mailbox data to an outside service.</p>
+          <div class="actions">
+            <a class="button" href="https://github.com/dynamiccookies/Retention-Manager-for-Gmail/wiki/Installation">Install manually</a>
+            <a class="button secondary" href="how-it-works.html">See how it works</a>
+          </div>
+          <p class="release-note">Current release: <a data-latest-release href="https://github.com/dynamiccookies/Retention-Manager-for-Gmail/releases/latest">view latest release</a></p>
+        </div>
+        <div class="hero-card" aria-label="Illustration of the Gmail sidebar">
+          <div class="app-preview">
+            <div class="preview-head"><img src="assets/retention-manager-icon.svg" alt="">Retention Manager for Gmail™</div>
+            <div class="preview-body">
+              <div class="preview-section"><div class="preview-label">Schedule</div><div class="preview-value success">● Active</div></div>
+              <div class="preview-section"><div class="preview-label">Last run</div><div class="preview-value">Success</div><div>146 conversations reviewed · 8 messages moved</div></div>
+              <div class="preview-section"><div class="preview-label">Next run</div><div class="preview-value">Tomorrow · 4:45–5:15 AM</div></div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+    <section class="section alt">
+      <div class="container">
+        <div class="section-heading"><div class="eyebrow">Simple policies</div><h2>Your labels define the retention period.</h2><p class="lead">Apply a label yourself or let an ordinary Gmail filter apply it automatically.</p></div>
+        <div class="grid-3">
+          <article class="card"><div class="card-icon">1</div><h3>Label</h3><p>Use a label such as <code>Retention/30d</code> on conversations that should be kept for 30 days.</p></article>
+          <article class="card"><div class="card-icon">2</div><h3>Schedule</h3><p>Choose how often Retention Manager checks labeled conversations for expiration.</p></article>
+          <article class="card"><div class="card-icon">3</div><h3>Review</h3><p>Receive a deletion summary with direct links to the conversations moved to Gmail Trash.</p></article>
+        </div>
+      </div>
+    </section>
+    <section class="section">
+      <div class="container">
+        <div class="section-heading"><div class="eyebrow">Built for control</div><h2>Automation without surrendering visibility.</h2></div>
+        <div class="grid-3">
+          <article class="card"><h3>Runs in your account</h3><p>The manually installed app executes inside your Google Apps Script environment.</p></article>
+          <article class="card"><h3>Only labeled conversations</h3><p>No default retention period is imposed. You decide which conversations receive retention labels.</p></article>
+          <article class="card"><h3>Recoverable deletion</h3><p>Expired active messages are moved to Gmail Trash, not immediately deleted forever.</p></article>
+          <article class="card"><h3>Operational status</h3><p>The Gmail sidebar shows the schedule, last run, next run, and current runtime state.</p></article>
+          <article class="card"><h3>Detailed administration</h3><p>Manage labels, notifications, schedules, backups, diagnostics, and simple filter cleanup.</p></article>
+          <article class="card"><h3>Clear reporting</h3><p>Summaries report what moved and provide direct Gmail links when review is needed.</p></article>
+        </div>
+      </div>
+    </section>
+    <section class="section alt">
+      <div class="container cta"><div><h2>Ready to set your first policy?</h2><p>The Wiki walks through the manual Apps Script installation from start to finish.</p></div><a class="button" href="https://github.com/dynamiccookies/Retention-Manager-for-Gmail/wiki/Installation">Open installation guide</a></div>
+    </section>
+  </main>
+  <footer class="site-footer"><div class="container"><div class="footer-grid"><strong>Retention Manager for Gmail™</strong><div class="footer-links"><a href="https://github.com/dynamiccookies/Retention-Manager-for-Gmail/wiki">Documentation</a><a href="https://github.com/dynamiccookies/Retention-Manager-for-Gmail/releases">Releases</a><a href="privacy.html">Privacy</a><a href="terms.html">Terms</a><a href="support.html">Support</a></div></div><p class="fine-print">© <span data-year></span> Retention Manager for Gmail™. Independent software not affiliated with or endorsed by Google. Gmail is a trademark of Google LLC.</p></div></footer>
+</body>
+</html>
