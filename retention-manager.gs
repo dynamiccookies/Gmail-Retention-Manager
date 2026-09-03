@@ -1740,17 +1740,25 @@ function getRetentionAdminPreferences() {
   }
 }
 
-/** @return {string} Valid default time zone for a new schedule. */
+/** @return {string} Neutral fallback time zone for a new schedule. */
 function getDefaultRetentionScheduleTimeZone() {
-  const scriptTimeZone = Session.getScriptTimeZone();
+  return 'Etc/UTC';
+}
 
+/** Returns a validated user time zone supplied by a Workspace add-on event. */
+function getAddOnEventTimeZone_(event) {
+  const candidate = event && event.commonEventObject &&
+      event.commonEventObject.timeZone
+    ? event.commonEventObject.timeZone.id
+    : '';
+  if (!candidate) {
+    return null;
+  }
   try {
-    return validateRetentionScheduleTimeZone(scriptTimeZone);
+    return validateRetentionScheduleTimeZone(candidate);
   } catch (error) {
-    console.error(
-      `Invalid Apps Script project time zone ${scriptTimeZone}: ${error.message}`,
-    );
-    return 'Etc/UTC';
+    console.warn(`Ignoring invalid add-on time zone ${candidate}: ${error.message}`);
+    return null;
   }
 }
 
@@ -2892,11 +2900,23 @@ function getAdminRuntimeData() {
 /**
  * Gmail add-on homepage trigger.
  *
+ * @param {Object=} event Workspace add-on launch event.
  * @return {Card} Retention Manager sidebar card.
  */
-function buildGmailHomepage() {
+function buildGmailHomepage(event) {
   assertAdminOwnerAccess();
-  return buildRetentionSidebarCard_();
+  const trigger = getRetentionTriggerStatus();
+  const detectedTimeZone = !trigger.configured
+    ? getAddOnEventTimeZone_(event)
+    : null;
+  return buildRetentionSidebarCard_(detectedTimeZone
+    ? {
+        preferences: {
+          ...trigger.preferences,
+          timeZone: detectedTimeZone,
+        },
+      }
+    : {});
 }
 
 /**
@@ -3098,8 +3118,25 @@ function getTimeZoneOffsetMilliseconds_(date, timeZone) {
  *
  * @return {Date} Resolved instant.
  */
-function createZonedDate_(year, month, day, hour, minute, timeZone) {
-  const wallClockUtc = Date.UTC(year, month - 1, day, hour, minute, 0, 0);
+function createZonedDate_(
+  year,
+  month,
+  day,
+  hour,
+  minute,
+  timeZone,
+  second = 0,
+  millisecond = 0,
+) {
+  const wallClockUtc = Date.UTC(
+    year,
+    month - 1,
+    day,
+    hour,
+    minute,
+    second,
+    millisecond,
+  );
   let candidate = new Date(wallClockUtc);
   for (let attempt = 0; attempt < 3; attempt += 1) {
     candidate = new Date(
@@ -3471,6 +3508,9 @@ function buildRetentionSidebarCard_(overrides = {}) {
  */
 function refreshRetentionSidebarSchedule(event) {
   const trigger = getRetentionTriggerStatus();
+  const detectedTimeZone = !trigger.configured
+    ? getAddOnEventTimeZone_(event)
+    : null;
   const frequency = getSidebarFormString_(
     event,
     'scheduleFrequency',
@@ -3478,6 +3518,7 @@ function refreshRetentionSidebarSchedule(event) {
   );
   const preferences = {
     ...trigger.preferences,
+    timeZone: detectedTimeZone || trigger.preferences.timeZone,
     enabled: getSidebarFormString_(event, 'scheduleEnabled', '') === 'true',
     frequency,
     dailyTime: getSidebarFormString_(
@@ -3516,6 +3557,9 @@ function getRetentionSidebarRequest_(event) {
   );
   const preferences = {
     ...trigger.preferences,
+    timeZone: !trigger.configured
+      ? getAddOnEventTimeZone_(event) || trigger.preferences.timeZone
+      : trigger.preferences.timeZone,
     enabled: getSidebarFormString_(event, 'scheduleEnabled', '') === 'true',
     frequency: getSidebarFormString_(
       event,
@@ -5527,6 +5571,7 @@ function executeGmailRetention_() {
   try {
     verboseLog('LOCK', 'Script lock acquired.');
     const now = new Date();
+    const retentionTimeZone = getConfiguredRetentionTimeZone();
     const availableUpdate = getAvailableUpdate();
     const effectiveUserEmail = Session.getEffectiveUser().getEmail();
     const activeUserEmail = Session.getActiveUser().getEmail();
@@ -5723,6 +5768,7 @@ function executeGmailRetention_() {
         policies,
         newestMessage.getDate(),
         isSystemNotification,
+        retentionTimeZone,
       );
 
       verboseLog('WINNING POLICY', () => ({
@@ -6294,12 +6340,14 @@ function ensureSystemNotificationPolicy(thread, policies) {
  * @param {Array} policies Parsed retention policies on the thread.
  * @param {Date} newestMessageDate Date of the newest message in the thread.
  * @param {boolean} isSystemNotification Whether the thread is script-generated.
+ * @param {string} timeZone Saved application time zone.
  * @return {Object} Winning policy including an expiresAt Date.
  */
 function chooseWinningPolicy(
   policies,
   newestMessageDate,
   isSystemNotification,
+  timeZone,
 ) {
   verboseLog('POLICY COMPARISON INPUT', {
     newestMessageDate: newestMessageDate.toISOString(),
@@ -6317,6 +6365,7 @@ function chooseWinningPolicy(
       newestMessageDate,
       policy.amount,
       policy.unit,
+      timeZone,
     ),
   }));
 
@@ -6373,15 +6422,33 @@ function chooseWinningPolicy(
   return evaluatedPolicies[0];
 }
 
+/** Returns calendar fields for one instant in the saved application time zone. */
+function getZonedDateTimeParts_(date, timeZone) {
+  const values = Utilities.formatDate(
+    date,
+    validateRetentionScheduleTimeZone(timeZone),
+    'yyyy,M,d,H,m,s',
+  ).split(',').map(Number);
+  return {
+    year: values[0],
+    month: values[1],
+    day: values[2],
+    hour: values[3],
+    minute: values[4],
+    second: values[5],
+  };
+}
+
 /**
  * Adds a retention period using calendar-aware arithmetic.
  *
  * @param {Date} startDate Date from which retention begins.
  * @param {number} amount Positive integer amount.
  * @param {'min'|'h'|'d'|'w'|'m'|'y'} unit Retention unit.
+ * @param {string} timeZone Saved application time zone.
  * @return {Date} Calculated expiration date.
  */
-function addRetentionPeriod(startDate, amount, unit) {
+function addRetentionPeriod(startDate, amount, unit, timeZone) {
   const result = new Date(startDate.getTime());
   verboseLog('ADD RETENTION PERIOD', {
     startDate: startDate.toISOString(),
@@ -6397,18 +6464,40 @@ function addRetentionPeriod(startDate, amount, unit) {
       return new Date(result.getTime() + amount * 60 * 60 * 1000);
 
     case 'd':
-      result.setDate(result.getDate() + amount);
-      return result;
-
     case 'w':
-      result.setDate(result.getDate() + amount * 7);
-      return result;
-
     case 'm':
-      return addCalendarMonthsClamped(result, amount);
-
-    case 'y':
-      return addCalendarMonthsClamped(result, amount * 12);
+    case 'y': {
+      const parts = getZonedDateTimeParts_(result, timeZone);
+      let calendarDate = new Date(Date.UTC(
+        parts.year,
+        parts.month - 1,
+        parts.day,
+        parts.hour,
+        parts.minute,
+        parts.second,
+        result.getUTCMilliseconds(),
+      ));
+      if (unit === 'd' || unit === 'w') {
+        calendarDate.setUTCDate(
+          calendarDate.getUTCDate() + amount * (unit === 'w' ? 7 : 1),
+        );
+      } else {
+        calendarDate = addUtcCalendarMonthsClamped_(
+          calendarDate,
+          amount * (unit === 'y' ? 12 : 1),
+        );
+      }
+      return createZonedDate_(
+        calendarDate.getUTCFullYear(),
+        calendarDate.getUTCMonth() + 1,
+        calendarDate.getUTCDate(),
+        calendarDate.getUTCHours(),
+        calendarDate.getUTCMinutes(),
+        timeZone,
+        calendarDate.getUTCSeconds(),
+        calendarDate.getUTCMilliseconds(),
+      );
+    }
 
     default:
       throw new Error(`Unsupported retention unit: ${unit}`);
@@ -6423,21 +6512,21 @@ function addRetentionPeriod(startDate, amount, unit) {
  * @param {number} monthCount Number of months to add.
  * @return {Date} Calendar-adjusted date.
  */
-function addCalendarMonthsClamped(startDate, monthCount) {
+function addUtcCalendarMonthsClamped_(startDate, monthCount) {
   const result = new Date(startDate.getTime());
-  const originalDay = result.getDate();
+  const originalDay = result.getUTCDate();
 
   // Move to day one before changing months to prevent JavaScript overflow.
-  result.setDate(1);
-  result.setMonth(result.getMonth() + monthCount);
+  result.setUTCDate(1);
+  result.setUTCMonth(result.getUTCMonth() + monthCount);
 
-  const lastDayOfTargetMonth = new Date(
-    result.getFullYear(),
-    result.getMonth() + 1,
+  const lastDayOfTargetMonth = new Date(Date.UTC(
+    result.getUTCFullYear(),
+    result.getUTCMonth() + 1,
     0,
-  ).getDate();
+  )).getUTCDate();
 
-  result.setDate(Math.min(originalDay, lastDayOfTargetMonth));
+  result.setUTCDate(Math.min(originalDay, lastDayOfTargetMonth));
   return result;
 }
 

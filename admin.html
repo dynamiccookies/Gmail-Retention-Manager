@@ -1661,8 +1661,8 @@
                   name="scheduleTimeZone"
                 ></select>
                 <p class="help">
-                  Used for the daily trigger, dashboard timestamps, and
-                  notification email timestamps. Select a supported time zone.
+                  Used for retention calculations, the daily trigger, dashboard
+                  timestamps, and notification email timestamps.
                 </p>
                 <p class="field-error" id="scheduleTimeZoneError"></p>
               </div>
@@ -3373,17 +3373,20 @@
       }
 
       function renderScheduleForm(trigger) {
+        const selectedTimeZone = trigger.configured
+          ? trigger.preferences.timeZone
+          : getBrowserTimeZone() || trigger.preferences.timeZone;
         currentTrigger = clone(trigger);
         populateScheduleFrequencyOptions(
           trigger.frequencyOptions,
           trigger.preferences.frequency,
         );
-        populateScheduleTimeZoneOptions(trigger.preferences.timeZone);
+        populateScheduleTimeZoneOptions(selectedTimeZone);
 
         elements.scheduleEnabled.checked = trigger.preferences.enabled;
         elements.scheduleFrequency.value = trigger.preferences.frequency;
         elements.scheduleDailyTime.value = trigger.preferences.dailyTime;
-        elements.scheduleTimeZone.value = trigger.preferences.timeZone;
+        elements.scheduleTimeZone.value = selectedTimeZone;
         elements.scheduleReplaceAcknowledgement.checked = false;
         clearScheduleValidationErrors();
 
@@ -3419,7 +3422,7 @@
           timeZones = [];
         }
 
-        const browserTimeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const browserTimeZone = getBrowserTimeZone();
         const fallbackTimeZones = [
           selectedTimeZone,
           browserTimeZone,
@@ -3444,6 +3447,14 @@
           option.textContent = timeZone;
           elements.scheduleTimeZone.appendChild(option);
         });
+      }
+
+      function getBrowserTimeZone() {
+        try {
+          return Intl.DateTimeFormat().resolvedOptions().timeZone || '';
+        } catch (error) {
+          return '';
+        }
       }
 
       function renderScheduleStatusWarning(trigger) {

@@ -1,5 +1,5 @@
 {
-  "timeZone": "America/Chicago",
+  "timeZone": "Etc/UTC",
   "dependencies": {
     "enabledAdvancedServices": [
       {
@@ -17,6 +17,7 @@
     "https://www.googleapis.com/auth/gmail.settings.basic",
     "https://www.googleapis.com/auth/script.scriptapp",
     "https://www.googleapis.com/auth/script.external_request",
+    "https://www.googleapis.com/auth/script.locale",
     "https://www.googleapis.com/auth/userinfo.email"
   ],
   "urlFetchWhitelist": [
@@ -25,6 +26,7 @@
   "addOns": {
     "common": {
       "name": "Retention Manager for Gmail™",
+      "useLocaleFromApp": true,
       "logoUrl": "https://raw.githubusercontent.com/dynamiccookies/retention-manager-for-gmail/refs/heads/release/0.7.0/icons/retention-manager-icon-128.png",
       "openLinkUrlPrefixes": [
         "https://script.google.com/macros/s/",
