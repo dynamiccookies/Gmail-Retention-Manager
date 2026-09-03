@@ -3489,6 +3489,64 @@ function buildSidebarActionResponse_(message) {
   return builder.build();
 }
 
+/** Saves sidebar settings and schedule under one lock, restoring the schedule on failure. */
+function applyRetentionSidebarSettings_(request, confirmExistingTriggers) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
+    throw new Error(
+      'Another retention operation is active. Wait for it to finish and try again.',
+    );
+  }
+
+  const priorSchedule = getRetentionScheduleConfiguration();
+  const settingsChanged = JSON.stringify(copyRetentionSettings(getRetentionSettings())) !==
+    JSON.stringify(copyRetentionSettings(request.settings));
+  const scheduleChanged = !priorSchedule.configured ||
+    !retentionSchedulePreferencesEqual(
+      priorSchedule.preferences,
+      request.preferences,
+    );
+  try {
+    if (scheduleChanged) {
+      applyRetentionScheduleFromAdmin(
+        {
+          preferences: request.preferences,
+          confirmExistingTriggers,
+        },
+        false,
+        true,
+      );
+    }
+    return settingsChanged
+      ? saveAdminPageSettings_(
+          { settings: request.settings, acknowledgements: {} },
+          true,
+        )
+      : { settings: copyRetentionSettings(getRetentionSettings()) };
+  } catch (error) {
+    if (scheduleChanged) {
+      try {
+        applyRetentionScheduleFromAdmin(
+          {
+            preferences: priorSchedule.preferences,
+            confirmExistingTriggers: true,
+          },
+          false,
+          true,
+        );
+      } catch (rollbackError) {
+        throw new Error(
+          `${getRuntimeErrorMessage(error)} Schedule rollback also failed: ` +
+            getRuntimeErrorMessage(rollbackError),
+        );
+      }
+    }
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
+}
+
 /**
  * Saves the card's root label and managed schedule.
  *
@@ -3544,11 +3602,7 @@ function saveRetentionSidebarSettings(event) {
         .build();
     }
 
-    saveAdminPageSettings({ settings: request.settings, acknowledgements: {} });
-    saveRetentionScheduleFromAdmin({
-      preferences: request.preferences,
-      confirmExistingTriggers: confirmed,
-    });
+    applyRetentionSidebarSettings_(request, confirmed);
     return buildSidebarActionResponse_('Settings saved.');
   } catch (error) {
     return CardService.newActionResponseBuilder()
@@ -3569,11 +3623,7 @@ function confirmRetentionSidebarSettings(event) {
     request.preferences = validateRetentionSchedulePreferences(
       request.preferences,
     );
-    saveAdminPageSettings({ settings: request.settings, acknowledgements: {} });
-    saveRetentionScheduleFromAdmin({
-      preferences: request.preferences,
-      confirmExistingTriggers: true,
-    });
+    applyRetentionSidebarSettings_(request, true);
     return CardService.newActionResponseBuilder()
       .setNavigation(
         CardService.newNavigation()
@@ -3825,6 +3875,11 @@ function saveAdminTheme(theme) {
  * @return {Object} Saved settings and timestamp.
  */
 function saveAdminPageSettings(request) {
+  return saveAdminPageSettings_(request, false);
+}
+
+/** Applies validated settings, optionally using a lock already held by the caller. */
+function saveAdminPageSettings_(request, lockHeld) {
   assertAdminOwnerAccess();
 
   if (!isConfigurationObject(request)) {
@@ -3837,7 +3892,7 @@ function saveAdminPageSettings(request) {
     : {};
   const lock = LockService.getScriptLock();
 
-  if (!lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
+  if (!lockHeld && !lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
     throw new Error(
       'Another retention operation is active. Wait for it to finish and try again.',
     );
@@ -3886,7 +3941,9 @@ function saveAdminPageSettings(request) {
       savedAt: new Date().toISOString(),
     };
   } finally {
-    lock.releaseLock();
+    if (!lockHeld) {
+      lock.releaseLock();
+    }
   }
 
   response.availableUpdate = getAvailableUpdate();
@@ -3998,7 +4055,7 @@ function retentionSchedulePreferencesEqual(first, second) {
  * @param {boolean} repairOnly Whether this is an explicit repair action.
  * @return {Object} Refreshed trigger state and operation type.
  */
-function applyRetentionScheduleFromAdmin(request, repairOnly) {
+function applyRetentionScheduleFromAdmin(request, repairOnly, lockHeld = false) {
   assertAdminOwnerAccess();
 
   if (!isConfigurationObject(request)) {
@@ -4009,7 +4066,7 @@ function applyRetentionScheduleFromAdmin(request, repairOnly) {
   const confirmExistingTriggers = request.confirmExistingTriggers === true;
   const lock = LockService.getScriptLock();
 
-  if (!lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
+  if (!lockHeld && !lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
     throw new Error(
       'Another retention operation is active. Wait for it to finish and try again.',
     );
@@ -4122,7 +4179,9 @@ function applyRetentionScheduleFromAdmin(request, repairOnly) {
       savedAt: new Date().toISOString(),
     };
   } finally {
-    lock.releaseLock();
+    if (!lockHeld) {
+      lock.releaseLock();
+    }
   }
 }
 
