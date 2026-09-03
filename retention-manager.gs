@@ -6114,12 +6114,12 @@ function buildTrashPermalink(thread, accountEmail) {
     'https://mail.google.com/mail/u/?authuser=' +
     `${encodeURIComponent(accountEmail)}#trash/${encodeURIComponent(threadId)}`;
 
-  verboseLog('TRASH PERMALINK', {
+  verboseLog('TRASH PERMALINK', () => ({
     threadId,
     accountEmail,
     originalPermalink: String(thread.getPermalink() || ''),
     trashPermalink,
-  });
+  }));
 
   return trashPermalink;
 }
