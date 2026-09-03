@@ -75,6 +75,9 @@ const RETENTION_UPDATE_NOTIFICATION_STATE_PROPERTY_KEY =
   'GMAIL_RETENTION_UPDATE_NOTIFICATION_STATE';
 const RETENTION_UPDATE_NOTIFICATION_STATE_SCHEMA_VERSION = 1;
 const RETENTION_UPDATE_NOTIFICATION_HISTORY_LIMIT = 25;
+const RETENTION_PENDING_SYSTEM_EMAILS_PROPERTY_KEY =
+  'GMAIL_RETENTION_PENDING_SYSTEM_EMAILS';
+const RETENTION_PENDING_SYSTEM_EMAILS_SCHEMA_VERSION = 1;
 const RETENTION_ADMIN_PREFERENCES_PROPERTY_KEY =
   'GMAIL_RETENTION_ADMIN_PREFERENCES';
 const RETENTION_ADMIN_PAGE_URL_PROPERTY_KEY =
@@ -343,8 +346,8 @@ function listGmailApiLabelThreads_(labelId, start, max) {
     .map(createGmailApiThread_);
 }
 
-/** Runs one Gmail read with bounded retries for transient API failures. */
-function executeGmailApiReadWithRetry_(operation) {
+/** Runs one idempotent Gmail operation with bounded transient-failure retries. */
+function executeGmailApiWithRetry_(operation) {
   let lastError = null;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
@@ -361,6 +364,11 @@ function executeGmailApiReadWithRetry_(operation) {
     }
   }
   throw lastError;
+}
+
+/** Runs one Gmail read with bounded retries for transient API failures. */
+function executeGmailApiReadWithRetry_(operation) {
+  return executeGmailApiWithRetry_(operation);
 }
 
 /** Verifies the metadata required by the retention calculation. */
@@ -5084,6 +5092,101 @@ function recordUpdateOnlyNotification(availableUpdate) {
   );
 }
 
+/** @return {Array} Valid system emails whose post-send Gmail changes need retrying. */
+function getPendingManagedSystemEmails_() {
+  const stored = PropertiesService.getScriptProperties().getProperty(
+    RETENTION_PENDING_SYSTEM_EMAILS_PROPERTY_KEY,
+  );
+  if (!stored) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(stored);
+    if (
+      !isConfigurationObject(parsed) ||
+      parsed.schemaVersion !== RETENTION_PENDING_SYSTEM_EMAILS_SCHEMA_VERSION ||
+      !Array.isArray(parsed.emails)
+    ) {
+      throw new Error('unsupported pending-system-email state');
+    }
+    return parsed.emails.filter(item =>
+      isConfigurationObject(item) &&
+      typeof item.messageId === 'string' && item.messageId &&
+      typeof item.threadId === 'string' && item.threadId &&
+      typeof item.systemLabelName === 'string' && item.systemLabelName &&
+      typeof item.retentionLabelName === 'string' && item.retentionLabelName,
+    );
+  } catch (error) {
+    console.error(
+      `Ignoring invalid ${RETENTION_PENDING_SYSTEM_EMAILS_PROPERTY_KEY}: ` +
+        getRuntimeErrorMessage(error),
+    );
+    return [];
+  }
+}
+
+/** Persists the pending post-send Gmail work queue. */
+function savePendingManagedSystemEmails_(emails) {
+  const properties = PropertiesService.getScriptProperties();
+  if (emails.length === 0) {
+    properties.deleteProperty(RETENTION_PENDING_SYSTEM_EMAILS_PROPERTY_KEY);
+    return;
+  }
+  properties.setProperty(
+    RETENTION_PENDING_SYSTEM_EMAILS_PROPERTY_KEY,
+    JSON.stringify({
+      schemaVersion: RETENTION_PENDING_SYSTEM_EMAILS_SCHEMA_VERSION,
+      emails,
+    }),
+  );
+}
+
+/** Adds or replaces one pending post-send Gmail operation. */
+function rememberPendingManagedSystemEmail_(entry) {
+  const emails = getPendingManagedSystemEmails_().filter(
+    item => item.messageId !== entry.messageId,
+  );
+  savePendingManagedSystemEmails_([...emails, entry]);
+}
+
+/** Removes one completed post-send Gmail operation. */
+function forgetPendingManagedSystemEmail_(messageId) {
+  savePendingManagedSystemEmails_(
+    getPendingManagedSystemEmails_().filter(item => item.messageId !== messageId),
+  );
+}
+
+/** Applies the managed labels and Inbox state; the operation is safe to retry. */
+function applyManagedSystemEmailState_(entry) {
+  const systemLabel = getOrCreateLabel(entry.systemLabelName);
+  const retentionLabel = getOrCreateLabel(entry.retentionLabelName);
+  executeGmailApiWithRetry_(() => Gmail.Users.Threads.modify(
+    {
+      addLabelIds: [systemLabel.getId(), retentionLabel.getId(), 'INBOX', 'UNREAD'],
+      removeLabelIds: ['SPAM'],
+    },
+    'me',
+    entry.threadId,
+  ));
+  invalidateGmailApiCaches_();
+}
+
+/** Retries post-send Gmail work without resending already-delivered emails. */
+function retryPendingManagedSystemEmails_() {
+  for (const entry of getPendingManagedSystemEmails_()) {
+    try {
+      applyManagedSystemEmailState_(entry);
+      forgetPendingManagedSystemEmail_(entry.messageId);
+    } catch (error) {
+      console.error(
+        `Unable to finish managing sent system email ${entry.messageId}: ` +
+          getRuntimeErrorMessage(error),
+      );
+    }
+  }
+}
+
 /**
  * Compares Gmail label names after normalizing separators, spacing, and case.
  *
@@ -5220,6 +5323,7 @@ function executeGmailRetention_() {
     const effectiveUserEmail = Session.getEffectiveUser().getEmail();
     const activeUserEmail = Session.getActiveUser().getEmail();
     const notificationRecipient = getNotificationRecipient();
+    retryPendingManagedSystemEmails_();
 
     verboseLog('SESSION', () => ({
       effectiveUserEmail,
@@ -6505,20 +6609,24 @@ function sendManagedSystemEmail(context, subject, plainBody, htmlBody) {
     },
   );
   const notificationThread = sentMessage.getThread();
-  Gmail.Users.Threads.modify(
-    {
-      addLabelIds: [
-        context.systemLabel.getId(),
-        context.notificationRetentionLabel.getId(),
-        'INBOX',
-        'UNREAD',
-      ],
-      removeLabelIds: ['SPAM'],
-    },
-    'me',
-    notificationThread.getId(),
-  );
-  invalidateGmailApiCaches_();
+  const pendingEntry = {
+    messageId: sentMessage.getId(),
+    threadId: notificationThread.getId(),
+    systemLabelName: context.systemLabel.getName(),
+    retentionLabelName: context.notificationRetentionLabel.getName(),
+    sentAt: new Date().toISOString(),
+  };
+  rememberPendingManagedSystemEmail_(pendingEntry);
+  try {
+    applyManagedSystemEmailState_(pendingEntry);
+    forgetPendingManagedSystemEmail_(pendingEntry.messageId);
+  } catch (error) {
+    console.error(
+      `System email ${pendingEntry.messageId} was sent, but its labels and Inbox ` +
+        `state could not be applied and will be retried: ` +
+        getRuntimeErrorMessage(error),
+    );
+  }
 
   verboseLog('SYSTEM EMAIL SENT', {
     subject,
