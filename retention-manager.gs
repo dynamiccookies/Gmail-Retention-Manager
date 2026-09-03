@@ -2836,6 +2836,15 @@ function getAdminPageData() {
   };
 }
 
+/** Returns only the operational data needed for lightweight status refreshes. */
+function getAdminRuntimeData() {
+  assertAdminOwnerAccess();
+  return {
+    runtime: getRetentionRuntimeState(),
+    trigger: getRetentionTriggerStatus(),
+  };
+}
+
 /**
  * Gmail add-on homepage trigger.
  *
