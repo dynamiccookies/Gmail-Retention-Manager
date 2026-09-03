@@ -2244,6 +2244,7 @@
               renderApplication(data);
               elements.loadingScreen.hidden = true;
               elements.app.hidden = false;
+              refreshAvailableUpdate();
             } catch (error) {
               showFatalError(error);
             }
@@ -2366,6 +2367,26 @@
         elements.updateAvailableLink.href = availableUpdate.releaseUrl;
         elements.updateAvailableLink.textContent =
           `View v${availableUpdate.version} release`;
+      }
+
+      function refreshAvailableUpdate() {
+        if (!initialSettings || !initialSettings.CHECK_FOR_UPDATES) {
+          applicationData.availableUpdate = null;
+          renderAvailableUpdate(null, false);
+          return;
+        }
+        google.script.run
+          .withSuccessHandler(availableUpdate => {
+            applicationData.availableUpdate = availableUpdate || null;
+            renderAvailableUpdate(
+              applicationData.availableUpdate,
+              initialSettings.CHECK_FOR_UPDATES,
+            );
+          })
+          .withFailureHandler(error => {
+            console.warn(`Update check failed: ${getErrorMessage(error)}`);
+          })
+          .getAvailableUpdateForAdmin();
       }
 
       function renderSettings(settings) {
@@ -3213,8 +3234,8 @@
         google.script.run
           .withSuccessHandler(response => {
             initialSettings = clone(response.settings);
-            applicationData.availableUpdate = response.availableUpdate || null;
             renderSettings(response.settings);
+            refreshAvailableUpdate();
             renderSettingsBackups(response.backups);
             updateWarnings();
             setBackupRestoreBusy(false);
@@ -4095,8 +4116,8 @@
         google.script.run
           .withSuccessHandler(response => {
             initialSettings = clone(response.settings);
-            applicationData.availableUpdate = response.availableUpdate || null;
             renderSettings(response.settings);
+            refreshAvailableUpdate();
             renderSettingsBackups(response.backups);
             updateWarnings();
             setBusy(false);

@@ -226,6 +226,7 @@ const RETENTION_CONFIG = Object.freeze({
   // Cache GitHub release results to reduce external requests. Apps Script allows
   // a maximum cache duration of 21,600 seconds (six hours).
   UPDATE_CHECK_CACHE_SECONDS: 21600,
+  UPDATE_CHECK_FAILURE_CACHE_SECONDS: 900,
 
   // Message-level Inbox removal uses the advanced Gmail service because Apps
   // Script's built-in archive methods operate only on entire conversations.
@@ -2850,7 +2851,6 @@ function refreshRetentionFilterCleanupFromAdmin() {
 function getAdminPageData() {
   const identity = assertAdminOwnerAccess();
   const trigger = getRetentionTriggerStatus();
-  const availableUpdate = getAvailableUpdate();
 
   return {
     application: {
@@ -2860,7 +2860,7 @@ function getAdminPageData() {
       releasesUrl: `${RETENTION_CONFIG.PROJECT_REPOSITORY_URL}/releases`,
       currentReleaseUrl: getProjectReleaseUrl(),
       adminPageUrl: getAdminPageUrl(),
-      availableUpdate,
+      availableUpdate: null,
       ownerEmail: identity.ownerEmail,
       timeZone: trigger.preferences.timeZone,
     },
@@ -2886,6 +2886,12 @@ function getAdminPageData() {
     trigger,
     filterCleanup: null,
   };
+}
+
+/** Returns update availability independently from the critical admin-page data. */
+function getAvailableUpdateForAdmin() {
+  assertAdminOwnerAccess();
+  return getAvailableUpdate();
 }
 
 /** Returns only the operational data needed for lightweight status refreshes. */
@@ -4058,7 +4064,6 @@ function saveAdminPageSettings_(request, lockHeld) {
     }
   }
 
-  response.availableUpdate = getAvailableUpdate();
   return response;
 }
 
@@ -4139,7 +4144,6 @@ function restoreRetentionSettingsBackupFromAdmin(request) {
     lock.releaseLock();
   }
 
-  response.availableUpdate = getAvailableUpdate();
   return response;
 }
 
@@ -4963,7 +4967,12 @@ function getLatestPublishedRelease() {
     if (responseCode !== 200) {
       console.warn(
         `GitHub update check returned HTTP ${responseCode}. The unsuccessful ` +
-          'result was not cached and will be retried on the next check.',
+          'result will be retried after a short cooldown.',
+      );
+      cache.put(
+        cacheKey,
+        JSON.stringify({ release: null, responseCode }),
+        RETENTION_CONFIG.UPDATE_CHECK_FAILURE_CACHE_SECONDS,
       );
       return null;
     }
@@ -4976,6 +4985,11 @@ function getLatestPublishedRelease() {
         tagName: payload.tag_name,
         releaseUrl: payload.html_url,
       });
+      cache.put(
+        cacheKey,
+        JSON.stringify({ release: null, responseCode }),
+        RETENTION_CONFIG.UPDATE_CHECK_FAILURE_CACHE_SECONDS,
+      );
       return null;
     }
 
@@ -4993,11 +5007,18 @@ function getLatestPublishedRelease() {
     return release;
   } catch (error) {
     console.warn(
-      'GitHub update check failed. The unsuccessful result was not cached and ' +
-        `will be retried on the next check: ${
-          error && error.message ? error.message : String(error)
-        }`,
+      'GitHub update check failed and will be retried after a short cooldown: ' +
+        (error && error.message ? error.message : String(error)),
     );
+    try {
+      cache.put(
+        cacheKey,
+        JSON.stringify({ release: null, responseCode: null }),
+        RETENTION_CONFIG.UPDATE_CHECK_FAILURE_CACHE_SECONDS,
+      );
+    } catch (cacheError) {
+      console.warn(`Unable to cache the update-check failure: ${cacheError.message}`);
+    }
     return null;
   }
 }
