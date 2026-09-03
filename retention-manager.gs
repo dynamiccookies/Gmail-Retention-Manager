@@ -1,140 +1,7 @@
 /**
- * Retention Manager for Gmail
- * ===========================
- *
- * Repository: https://github.com/dynamiccookies/retention-manager-for-gmail
- *
- * Version: 0.6.0
- *
- * PURPOSE
- * -------
- * Automatically moves active Gmail messages to Trash after the retention period
- * specified by a Gmail label. Gmail filters decide which conversations receive
- * a retention label; this script only enforces those labels.
- *
- * SUPPORTED LABEL FORMAT
- * ----------------------
- * By default, create labels beneath the "Retention" label. Changing ROOT_LABEL
- * changes that prefix everywhere in the script. Both compact and readable forms
- * are accepted, with or without whitespace between the number and unit:
- *
- *   Retention/15min       = 15 minutes
- *   Retention/2 hours     = 2 hours
- *   Retention/7d          = 7 days
- *   Retention/2 weeks     = 2 weeks
- *   Retention/1 month     = 1 calendar month
- *   Retention/1yr         = 1 calendar year
- *
- * Supported unit aliases are case-insensitive:
- *
- *   Minutes: min, mins, minute, minutes
- *   Hours:   h, hr, hrs, hour, hours
- *   Days:    d, day, days
- *   Weeks:   w, wk, wks, week, weeks
- *   Months:  m, mo, mos, mon, mons, month, months
- *   Years:   y, yr, yrs, year, years
- *
- * The single-letter alias "m" always means calendar month. Minutes require
- * "min" or a longer minute alias. This deliberately favors the longer and safer
- * retention period when a user chooses the ambiguous single letter.
- *
- * Labels are discovered dynamically every time the script runs. You can create,
- * rename, or remove retention-period labels without changing this code. For
- * example, Retention/45mins, Retention/36 hours, Retention/45 days, and
- * Retention/3years all work automatically on the next run.
- *
- * IMPORTANT BEHAVIOR
- * ------------------
- * 1. Gmail labels apply to an entire conversation/thread, not one isolated
- *    message. The policy therefore applies to every active message in the
- *    conversation. Messages already in Trash are skipped rather than causing
- *    the remaining active messages in the conversation to be skipped.
- *
- * 2. The retention clock starts from the newest message in the conversation.
- *    A new reply resets the clock for the entire conversation.
- *
- * 3. When multiple retention labels exist, the script calculates the actual
- *    expiration timestamp for each policy from the newest message date. The
- *    policy producing the latest expiration wins, even when the labels use
- *    different units. For example, Retention/45d outlasts Retention/1m
- *    and therefore wins. All shorter or equivalent labels are removed so only
- *    one active retention label remains and the Gmail UI is unambiguous.
- *
- * 4. Minutes and hours use elapsed-time arithmetic. Days and weeks use
- *    calendar-day arithmetic. Months and years use calendar arithmetic rather
- *    than fixed 30-day or 365-day approximations. Month/year dates are clamped
- *    when necessary; for example, one month after January 31 becomes the last
- *    valid day of February.
- *
- * 5. Removing the retention label is the opt-out mechanism. A conversation with
- *    no valid retention label is ignored by the script.
- *
- * 6. Expired conversations are moved to Gmail Trash, not permanently deleted.
- *    Gmail handles final deletion from Trash under its normal Trash behavior.
- *
- * 7. After deleting ordinary messages, the script emails the user an HTML table
- *    listing every message moved to Trash. Each subject links directly to the
- *    conversation under Gmail's Trash route.
- *
- * 8. Summary notifications receive the policy configured by
- *    NOTIFICATION_RETENTION_LABEL_SUFFIX (1d by default) and are marked with the
- *    temporary internal child label configured by SYSTEM_NOTIFICATION_LABEL_SUFFIX.
- *    Both are created beneath ROOT_LABEL automatically when needed. When a
- *    notification is moved to Trash, its internal and retention labels are
- *    removed; if no active notifications remain, the internal label itself is
- *    deleted. Notifications are never included in another summary, preventing
- *    an endless delete-notify-delete loop.
- *
- * 9. When CHECK_FOR_UPDATES is enabled, every retention run checks the latest
- *    published GitHub release. Deletion summaries and the private admin page
- *    link directly to a newer release for manual installation. If a run has no
- *    deletion summary, one update-only email is sent per newer release. Results
- *    are cached for up to six hours, and lookup failures never interrupt Gmail
- *    retention or notification delivery.
- *
- * 10. ARCHIVE_ON_LABEL is disabled by default. When enabled, each scan removes
- *     the Inbox label from directly retention-labeled messages that are not yet
- *     expired. This is performed at message level so unrelated messages in a
- *     mixed conversation are not archived. This option requires the advanced
- *     Gmail service. Disabling it stops future archiving but does not return
- *     previously archived messages to Inbox.
- *
- * FIRST-RUN LABELS
- * ----------------
- * At the beginning of each run, the script checks whether the configured root
- * label exists. If it does not, the script creates the root label plus these two
- * starter retention-policy labels and verifies all three:
- *
- * With the default configuration, the starter set is:
- *
- *   Retention
- *   Retention/7d
- *   Retention/1m
- *
- * If the configured root label already exists, the script does not create or
- * recreate any retention sublabels. This gives new users a starting point while
- * preserving each user's intentionally customized label structure.
- *
- * VERBOSE DIAGNOSTICS
- * -------------------
- * Set the saved VERBOSE_LOGGING setting to true and run
- * diagnoseGmailRetentionLabels() to troubleshoot label creation without
- * processing any mail. The log records raw and normalized label names, direct
- * and scanned lookup results, createLabel() calls, verification retries, parsed
- * policies, and the Gmail account/session context. After troubleshooting, set
- * VERBOSE_LOGGING back to false because logs can contain mailbox metadata.
- *
- * INSTALLATION
- * ------------
- * - Paste retention-manager.gs, admin.html, and appsscript.json into one
- *   standalone Google Apps Script project.
- * - Create a non-test web-app deployment, then install the Gmail add-on from
- *   Apps Script's Test deployments screen.
- * - Open Gmail. The sidebar automatically queues a one-time setup trigger that
- *   records the web-app URL and then removes itself. Use the card's Refresh
- *   button once if Advanced Settings is still being prepared.
- * - Configure the retention schedule from the sidebar card.
- * - Create Gmail filters that apply labels such as Retention/7d or Retention/1m.
+ * Retention Manager for Gmail™
+ * Enforces Gmail label-based retention policies and provides Gmail and web UIs.
+ * Documentation: https://github.com/dynamiccookies/retention-manager-for-gmail
  */
 
 /*
@@ -208,6 +75,16 @@ const RETENTION_UPDATE_NOTIFICATION_STATE_PROPERTY_KEY =
   'GMAIL_RETENTION_UPDATE_NOTIFICATION_STATE';
 const RETENTION_UPDATE_NOTIFICATION_STATE_SCHEMA_VERSION = 1;
 const RETENTION_UPDATE_NOTIFICATION_HISTORY_LIMIT = 25;
+const RETENTION_PENDING_SYSTEM_EMAILS_PROPERTY_KEY =
+  'GMAIL_RETENTION_PENDING_SYSTEM_EMAILS';
+const RETENTION_PENDING_SYSTEM_EMAILS_SCHEMA_VERSION = 1;
+const RETENTION_DELETION_OUTBOX_PROPERTY_KEY =
+  'GMAIL_RETENTION_DELETION_REPORT_OUTBOX';
+const RETENTION_DELETION_OUTBOX_CHUNK_PREFIX =
+  'GMAIL_RETENTION_DELETION_REPORT_CHUNK_';
+const RETENTION_DELETION_OUTBOX_SCHEMA_VERSION = 1;
+const RETENTION_DELETION_OUTBOX_CHUNK_SIZE = 7500;
+const RETENTION_DELETION_OUTBOX_MAX_ENCODED_CHARACTERS = 175000;
 const RETENTION_ADMIN_PREFERENCES_PROPERTY_KEY =
   'GMAIL_RETENTION_ADMIN_PREFERENCES';
 const RETENTION_ADMIN_PAGE_URL_PROPERTY_KEY =
@@ -349,6 +226,7 @@ const RETENTION_CONFIG = Object.freeze({
   // Cache GitHub release results to reduce external requests. Apps Script allows
   // a maximum cache duration of 21,600 seconds (six hours).
   UPDATE_CHECK_CACHE_SECONDS: 21600,
+  UPDATE_CHECK_FAILURE_CACHE_SECONDS: 900,
 
   // Message-level Inbox removal uses the advanced Gmail service because Apps
   // Script's built-in archive methods operate only on entire conversations.
@@ -367,10 +245,6 @@ const RETENTION_CONFIG = Object.freeze({
 
   // Gmail Apps Script methods are safest when processed in moderate batches.
   THREAD_PAGE_SIZE: 100,
-  // Active messages are moved individually so mixed Inbox/Trash conversations
-  // do not lose their remaining active messages during retention enforcement.
-  TRASH_BATCH_SIZE: 100,
-
   // Large deletion runs are split into multiple complete summary messages.
   MAX_ROWS_PER_NOTIFICATION: 200,
 
@@ -444,10 +318,13 @@ function listGmailApiLabelThreads_(labelId, start, max) {
   const targetCount = Math.max(0, start) + Math.max(0, max);
   const state = gmailApiLabelThreadIdCache.get(labelId) || {
     ids: [],
+    idSet: new Set(),
     nextPageToken: null,
-    started: false,
     complete: false,
   };
+  if (!state.idSet) {
+    state.idSet = new Set(state.ids);
+  }
 
   while (!state.complete && state.ids.length < targetCount) {
     const options = {
@@ -461,12 +338,12 @@ function listGmailApiLabelThreads_(labelId, start, max) {
     const response = Gmail.Users.Threads.list('me', options) || {};
     if (Array.isArray(response.threads)) {
       response.threads.forEach(resource => {
-        if (resource && resource.id && !state.ids.includes(resource.id)) {
+        if (resource && resource.id && !state.idSet.has(resource.id)) {
           state.ids.push(resource.id);
+          state.idSet.add(resource.id);
         }
       });
     }
-    state.started = true;
     state.nextPageToken = response.nextPageToken || null;
     state.complete = !state.nextPageToken;
   }
@@ -477,8 +354,8 @@ function listGmailApiLabelThreads_(labelId, start, max) {
     .map(createGmailApiThread_);
 }
 
-/** Runs one Gmail read with bounded retries for transient API failures. */
-function executeGmailApiReadWithRetry_(operation) {
+/** Runs one idempotent Gmail operation with bounded transient-failure retries. */
+function executeGmailApiWithRetry_(operation) {
   let lastError = null;
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
@@ -495,6 +372,11 @@ function executeGmailApiReadWithRetry_(operation) {
     }
   }
   throw lastError;
+}
+
+/** Runs one Gmail read with bounded retries for transient API failures. */
+function executeGmailApiReadWithRetry_(operation) {
+  return executeGmailApiWithRetry_(operation);
 }
 
 /** Verifies the metadata required by the retention calculation. */
@@ -538,10 +420,10 @@ function readGmailApiThreadResource_(threadId) {
     return validateGmailApiThreadResource_(metadataThread, threadId);
   } catch (error) {
     metadataError = error;
-    verboseLog('THREAD METADATA READ FALLBACK', {
+    verboseLog('THREAD METADATA READ FALLBACK', () => ({
       threadId,
       error: getRuntimeErrorMessage(error),
-    });
+    }));
   }
 
   try {
@@ -620,10 +502,10 @@ function createGmailApiThread_(threadId) {
       try {
         Gmail.Users.Threads.untrash('me', threadId);
       } catch (error) {
-        verboseLog('THREAD UNTRASH SKIPPED', {
+        verboseLog('THREAD UNTRASH SKIPPED', () => ({
           threadId,
           error: error.message,
-        });
+        }));
       }
       Gmail.Users.Threads.modify(
         { addLabelIds: ['INBOX'], removeLabelIds: ['SPAM'] },
@@ -738,27 +620,28 @@ const GmailApiApp = Object.freeze({
     invalidateGmailApiCaches_();
     return createGmailApiLabel_(resource);
   },
-  createDraft: (recipient, subject, plainBody, options) => ({
-    send: () => {
-      const mimeMessage = buildGmailApiMimeMessage_(
-        recipient,
-        subject,
-        plainBody,
-        options,
-      );
-      const raw = Utilities.base64EncodeWebSafe(
-        mimeMessage,
-        Utilities.Charset.UTF_8,
-      ).replace(/=+$/g, '');
-      const resource = Gmail.Users.Messages.send({ raw }, 'me');
-      gmailApiThreadCache.delete(resource.threadId);
-      return createGmailApiMessage_(resource);
-    },
-  }),
+  sendMessage: (recipient, subject, plainBody, options) => {
+    const mimeMessage = buildGmailApiMimeMessage_(
+      recipient,
+      subject,
+      plainBody,
+      options,
+    );
+    const raw = Utilities.base64EncodeWebSafe(
+      mimeMessage,
+      Utilities.Charset.UTF_8,
+    ).replace(/=+$/g, '');
+    const resource = Gmail.Users.Messages.send({ raw }, 'me');
+    gmailApiThreadCache.delete(resource.threadId);
+    return createGmailApiMessage_(resource);
+  },
 });
 
 /* Cached only for the current Apps Script execution. */
 let retentionSettingsCache = null;
+let verboseLoggingEnabled = false;
+let retentionLabelPatternCache = null;
+let retentionLabelPatternRoot = '';
 
 /** @return {Object} A mutable copy of the immutable factory defaults. */
 function copyFactoryRetentionSettings() {
@@ -783,6 +666,24 @@ function copyRetentionSettings(settings) {
       ...settings.DEFAULT_RETENTION_LABEL_SUFFIXES,
     ],
   };
+}
+
+/** Compares every recognized setting without depending on JSON key order. */
+function retentionSettingsEqual(first, second) {
+  if (!first || !second) {
+    return false;
+  }
+  return Object.keys(RETENTION_FACTORY_DEFAULTS).every(key => {
+    const firstValue = first[key];
+    const secondValue = second[key];
+    if (Array.isArray(firstValue) || Array.isArray(secondValue)) {
+      return Array.isArray(firstValue) &&
+        Array.isArray(secondValue) &&
+        firstValue.length === secondValue.length &&
+        firstValue.every((value, index) => value === secondValue[index]);
+    }
+    return firstValue === secondValue;
+  });
 }
 
 /**
@@ -1124,6 +1025,9 @@ function saveRetentionSettings(settings) {
     JSON.stringify(storedConfiguration),
   );
   retentionSettingsCache = freezeRetentionSettings(validatedSettings);
+  verboseLoggingEnabled = retentionSettingsCache.VERBOSE_LOGGING;
+  retentionLabelPatternCache = null;
+  retentionLabelPatternRoot = '';
 
   return copyRetentionSettings(retentionSettingsCache);
 }
@@ -1317,6 +1221,7 @@ function getRetentionSettings() {
       migration.configuration.settings,
     );
     retentionSettingsCache = freezeRetentionSettings(validatedSettings);
+    verboseLoggingEnabled = retentionSettingsCache.VERBOSE_LOGGING;
 
     if (migration.migrated) {
       createRetentionSettingsBackupFromConfiguration(
@@ -1836,17 +1741,25 @@ function getRetentionAdminPreferences() {
   }
 }
 
-/** @return {string} Valid default time zone for a new schedule. */
+/** @return {string} Neutral fallback time zone for a new schedule. */
 function getDefaultRetentionScheduleTimeZone() {
-  const scriptTimeZone = Session.getScriptTimeZone();
+  return 'Etc/UTC';
+}
 
+/** Returns a validated user time zone supplied by a Workspace add-on event. */
+function getAddOnEventTimeZone_(event) {
+  const candidate = event && event.commonEventObject &&
+      event.commonEventObject.timeZone
+    ? event.commonEventObject.timeZone.id
+    : '';
+  if (!candidate) {
+    return null;
+  }
   try {
-    return validateRetentionScheduleTimeZone(scriptTimeZone);
+    return validateRetentionScheduleTimeZone(candidate);
   } catch (error) {
-    console.error(
-      `Invalid Apps Script project time zone ${scriptTimeZone}: ${error.message}`,
-    );
-    return 'Etc/UTC';
+    console.warn(`Ignoring invalid add-on time zone ${candidate}: ${error.message}`);
+    return null;
   }
 }
 
@@ -2162,7 +2075,13 @@ function getRetentionRunSource(event) {
  * @param {Object} changes Runtime-state fields to replace.
  */
 function updateRetentionRuntimeStateSafely(changes) {
+  const lock = LockService.getUserLock();
+  let lockAcquired = false;
   try {
+    lockAcquired = lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS);
+    if (!lockAcquired) {
+      throw new Error('Timed out waiting to update runtime state.');
+    }
     const state = {
       ...getRetentionRuntimeState(),
       ...changes,
@@ -2178,6 +2097,10 @@ function updateRetentionRuntimeStateSafely(changes) {
       `Unable to update ${RETENTION_RUNTIME_STATE_PROPERTY_KEY}: ` +
         `${error && error.stack ? error.stack : error}`,
     );
+  } finally {
+    if (lockAcquired) {
+      lock.releaseLock();
+    }
   }
 }
 
@@ -2644,7 +2567,7 @@ function getRetentionFilterCleanupHistory_() {
     }
     return parsed.items;
   } catch (error) {
-    verboseLog('FILTER CLEANUP HISTORY READ FAILURE', String(error));
+    verboseLog('FILTER CLEANUP HISTORY READ FAILURE', () => (String(error)));
     return [];
   }
 }
@@ -2701,7 +2624,7 @@ function getRetentionFilterCleanupForAdmin_() {
   } catch (error) {
     analysis = { totalFilterCount: 0, suggestions: [] };
     errorMessage = error && error.message ? error.message : String(error);
-    verboseLog('FILTER CLEANUP ANALYSIS FAILURE', errorMessage);
+    verboseLog('FILTER CLEANUP ANALYSIS FAILURE', () => (errorMessage));
   }
   return {
     error: errorMessage,
@@ -2760,7 +2683,7 @@ function createAndVerifyRetentionFilter_(resource) {
     try {
       removeRetentionGmailFilter_(created.id);
     } catch (cleanupError) {
-      verboseLog('FILTER CLEANUP REPLACEMENT ROLLBACK FAILURE', cleanupError);
+      verboseLog('FILTER CLEANUP REPLACEMENT ROLLBACK FAILURE', () => (cleanupError));
     }
     throw new Error(
       'Gmail did not preserve the proposed replacement filter exactly. ' +
@@ -2824,7 +2747,7 @@ function mergeRetentionFiltersFromAdmin(request) {
       } catch (rollbackError) {
         rollbackMessage = ' The untracked replacement could not be removed; ' +
           'review Gmail filters before retrying.';
-        verboseLog('FILTER CLEANUP BACKUP ROLLBACK FAILURE', rollbackError);
+        verboseLog('FILTER CLEANUP BACKUP ROLLBACK FAILURE', () => (rollbackError));
       }
       throw new Error(
         `The filter backup could not be saved: ${error.message}.` +
@@ -2928,7 +2851,6 @@ function refreshRetentionFilterCleanupFromAdmin() {
 function getAdminPageData() {
   const identity = assertAdminOwnerAccess();
   const trigger = getRetentionTriggerStatus();
-  const availableUpdate = getAvailableUpdate();
 
   return {
     application: {
@@ -2938,7 +2860,7 @@ function getAdminPageData() {
       releasesUrl: `${RETENTION_CONFIG.PROJECT_REPOSITORY_URL}/releases`,
       currentReleaseUrl: getProjectReleaseUrl(),
       adminPageUrl: getAdminPageUrl(),
-      availableUpdate,
+      availableUpdate: null,
       ownerEmail: identity.ownerEmail,
       timeZone: trigger.preferences.timeZone,
     },
@@ -2962,18 +2884,45 @@ function getAdminPageData() {
     adminPreferences: getRetentionAdminPreferences(),
     runtime: getRetentionRuntimeState(),
     trigger,
-    filterCleanup: getRetentionFilterCleanupForAdmin_(),
+    filterCleanup: null,
+  };
+}
+
+/** Returns update availability independently from the critical admin-page data. */
+function getAvailableUpdateForAdmin() {
+  assertAdminOwnerAccess();
+  return getAvailableUpdate();
+}
+
+/** Returns only the operational data needed for lightweight status refreshes. */
+function getAdminRuntimeData() {
+  assertAdminOwnerAccess();
+  return {
+    runtime: getRetentionRuntimeState(),
+    trigger: getRetentionTriggerStatus(),
   };
 }
 
 /**
  * Gmail add-on homepage trigger.
  *
+ * @param {Object=} event Workspace add-on launch event.
  * @return {Card} Retention Manager sidebar card.
  */
-function buildGmailHomepage() {
+function buildGmailHomepage(event) {
   assertAdminOwnerAccess();
-  return buildRetentionSidebarCard_();
+  const trigger = getRetentionTriggerStatus();
+  const detectedTimeZone = !trigger.configured
+    ? getAddOnEventTimeZone_(event)
+    : null;
+  return buildRetentionSidebarCard_(detectedTimeZone
+    ? {
+        preferences: {
+          ...trigger.preferences,
+          timeZone: detectedTimeZone,
+        },
+      }
+    : {});
 }
 
 /**
@@ -3175,8 +3124,25 @@ function getTimeZoneOffsetMilliseconds_(date, timeZone) {
  *
  * @return {Date} Resolved instant.
  */
-function createZonedDate_(year, month, day, hour, minute, timeZone) {
-  const wallClockUtc = Date.UTC(year, month - 1, day, hour, minute, 0, 0);
+function createZonedDate_(
+  year,
+  month,
+  day,
+  hour,
+  minute,
+  timeZone,
+  second = 0,
+  millisecond = 0,
+) {
+  const wallClockUtc = Date.UTC(
+    year,
+    month - 1,
+    day,
+    hour,
+    minute,
+    second,
+    millisecond,
+  );
   let candidate = new Date(wallClockUtc);
   for (let attempt = 0; attempt < 3; attempt += 1) {
     candidate = new Date(
@@ -3548,6 +3514,9 @@ function buildRetentionSidebarCard_(overrides = {}) {
  */
 function refreshRetentionSidebarSchedule(event) {
   const trigger = getRetentionTriggerStatus();
+  const detectedTimeZone = !trigger.configured
+    ? getAddOnEventTimeZone_(event)
+    : null;
   const frequency = getSidebarFormString_(
     event,
     'scheduleFrequency',
@@ -3555,6 +3524,7 @@ function refreshRetentionSidebarSchedule(event) {
   );
   const preferences = {
     ...trigger.preferences,
+    timeZone: detectedTimeZone || trigger.preferences.timeZone,
     enabled: getSidebarFormString_(event, 'scheduleEnabled', '') === 'true',
     frequency,
     dailyTime: getSidebarFormString_(
@@ -3593,6 +3563,9 @@ function getRetentionSidebarRequest_(event) {
   );
   const preferences = {
     ...trigger.preferences,
+    timeZone: !trigger.configured
+      ? getAddOnEventTimeZone_(event) || trigger.preferences.timeZone
+      : trigger.preferences.timeZone,
     enabled: getSidebarFormString_(event, 'scheduleEnabled', '') === 'true',
     frequency: getSidebarFormString_(
       event,
@@ -3620,6 +3593,68 @@ function buildSidebarActionResponse_(message) {
     builder.setNotification(CardService.newNotification().setText(message));
   }
   return builder.build();
+}
+
+/** Saves sidebar settings and schedule under one lock, restoring the schedule on failure. */
+function applyRetentionSidebarSettings_(request, confirmExistingTriggers) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
+    throw new Error(
+      'Another retention operation is active. Wait for it to finish and try again.',
+    );
+  }
+
+  const priorSchedule = getRetentionScheduleConfiguration();
+  const priorTriggerStatus = getRetentionTriggerStatus();
+  const settingsChanged = !retentionSettingsEqual(
+    getRetentionSettings(),
+    request.settings,
+  );
+  const scheduleChanged = priorTriggerStatus.needsRepair ||
+    !priorSchedule.configured ||
+    !retentionSchedulePreferencesEqual(
+      priorSchedule.preferences,
+      request.preferences,
+    );
+  try {
+    if (scheduleChanged) {
+      applyRetentionScheduleFromAdmin(
+        {
+          preferences: request.preferences,
+          confirmExistingTriggers,
+        },
+        false,
+        true,
+      );
+    }
+    return settingsChanged
+      ? saveAdminPageSettings_(
+          { settings: request.settings, acknowledgements: {} },
+          true,
+        )
+      : { settings: copyRetentionSettings(getRetentionSettings()) };
+  } catch (error) {
+    if (scheduleChanged) {
+      try {
+        applyRetentionScheduleFromAdmin(
+          {
+            preferences: priorSchedule.preferences,
+            confirmExistingTriggers: true,
+          },
+          false,
+          true,
+        );
+      } catch (rollbackError) {
+        throw new Error(
+          `${getRuntimeErrorMessage(error)} Schedule rollback also failed: ` +
+            getRuntimeErrorMessage(rollbackError),
+        );
+      }
+    }
+    throw error;
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 /**
@@ -3677,11 +3712,7 @@ function saveRetentionSidebarSettings(event) {
         .build();
     }
 
-    saveAdminPageSettings({ settings: request.settings, acknowledgements: {} });
-    saveRetentionScheduleFromAdmin({
-      preferences: request.preferences,
-      confirmExistingTriggers: confirmed,
-    });
+    applyRetentionSidebarSettings_(request, confirmed);
     return buildSidebarActionResponse_('Settings saved.');
   } catch (error) {
     return CardService.newActionResponseBuilder()
@@ -3702,11 +3733,7 @@ function confirmRetentionSidebarSettings(event) {
     request.preferences = validateRetentionSchedulePreferences(
       request.preferences,
     );
-    saveAdminPageSettings({ settings: request.settings, acknowledgements: {} });
-    saveRetentionScheduleFromAdmin({
-      preferences: request.preferences,
-      confirmExistingTriggers: true,
-    });
+    applyRetentionSidebarSettings_(request, true);
     return CardService.newActionResponseBuilder()
       .setNavigation(
         CardService.newNavigation()
@@ -3844,6 +3871,12 @@ function prepareQueuedRetentionRun_(event) {
 /** Queues retention from Gmail and refreshes the card immediately. */
 function runRetentionFromSidebar() {
   assertAdminOwnerAccess();
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
+    return buildSidebarActionResponse_(
+      'Another retention operation is active. Wait for it to finish and try again.',
+    );
+  }
   try {
     const runtime = getRetentionRuntimeState();
     if (isRetentionRunPending_(runtime)) {
@@ -3929,6 +3962,8 @@ function runRetentionFromSidebar() {
     );
   } catch (error) {
     return buildSidebarActionResponse_(getRuntimeErrorMessage(error));
+  } finally {
+    lock.releaseLock();
   }
 }
 
@@ -3958,6 +3993,11 @@ function saveAdminTheme(theme) {
  * @return {Object} Saved settings and timestamp.
  */
 function saveAdminPageSettings(request) {
+  return saveAdminPageSettings_(request, false);
+}
+
+/** Applies validated settings, optionally using a lock already held by the caller. */
+function saveAdminPageSettings_(request, lockHeld) {
   assertAdminOwnerAccess();
 
   if (!isConfigurationObject(request)) {
@@ -3970,7 +4010,7 @@ function saveAdminPageSettings(request) {
     : {};
   const lock = LockService.getScriptLock();
 
-  if (!lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
+  if (!lockHeld && !lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
     throw new Error(
       'Another retention operation is active. Wait for it to finish and try again.',
     );
@@ -4019,10 +4059,11 @@ function saveAdminPageSettings(request) {
       savedAt: new Date().toISOString(),
     };
   } finally {
-    lock.releaseLock();
+    if (!lockHeld) {
+      lock.releaseLock();
+    }
   }
 
-  response.availableUpdate = getAvailableUpdate();
   return response;
 }
 
@@ -4103,7 +4144,6 @@ function restoreRetentionSettingsBackupFromAdmin(request) {
     lock.releaseLock();
   }
 
-  response.availableUpdate = getAvailableUpdate();
   return response;
 }
 
@@ -4131,7 +4171,7 @@ function retentionSchedulePreferencesEqual(first, second) {
  * @param {boolean} repairOnly Whether this is an explicit repair action.
  * @return {Object} Refreshed trigger state and operation type.
  */
-function applyRetentionScheduleFromAdmin(request, repairOnly) {
+function applyRetentionScheduleFromAdmin(request, repairOnly, lockHeld = false) {
   assertAdminOwnerAccess();
 
   if (!isConfigurationObject(request)) {
@@ -4142,7 +4182,7 @@ function applyRetentionScheduleFromAdmin(request, repairOnly) {
   const confirmExistingTriggers = request.confirmExistingTriggers === true;
   const lock = LockService.getScriptLock();
 
-  if (!lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
+  if (!lockHeld && !lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
     throw new Error(
       'Another retention operation is active. Wait for it to finish and try again.',
     );
@@ -4255,7 +4295,9 @@ function applyRetentionScheduleFromAdmin(request, repairOnly) {
       savedAt: new Date().toISOString(),
     };
   } finally {
-    lock.releaseLock();
+    if (!lockHeld) {
+      lock.releaseLock();
+    }
   }
 }
 
@@ -4286,6 +4328,19 @@ function repairRetentionScheduleFromAdmin(request) {
  */
 function runRetentionFromAdmin() {
   assertAdminOwnerAccess();
+  const pendingRuntime = getRetentionRuntimeState();
+  if (isRetentionRunPending_(pendingRuntime)) {
+    return {
+      result: {
+        status: 'skipped',
+        reason: pendingRuntime.lastRunStatus === 'queued'
+          ? 'A retention run is already queued.'
+          : 'A retention run is already in progress.',
+      },
+      runtime: pendingRuntime,
+      trigger: getRetentionTriggerStatus(),
+    };
+  }
   const result = enforceGmailRetention();
 
   return {
@@ -4425,10 +4480,15 @@ function applyConfiguredSystemNotificationLabelColor_(label) {
  * @return {RegExp} Case-insensitive retention-label pattern.
  */
 function getRetentionLabelPattern() {
-  return new RegExp(
-    `^${escapeRegExp(getRootLabelName())}/(\\d+)\\s*([a-z]+)$`,
-    'i',
-  );
+  const rootLabel = getRootLabelName();
+  if (!retentionLabelPatternCache || retentionLabelPatternRoot !== rootLabel) {
+    retentionLabelPatternRoot = rootLabel;
+    retentionLabelPatternCache = new RegExp(
+      `^${escapeRegExp(rootLabel)}/(\\d+)\\s*([a-z]+)$`,
+      'i',
+    );
+  }
+  return retentionLabelPatternCache;
 }
 
 /** @return {string} GitHub release URL for the configured semantic version. */
@@ -4454,7 +4514,7 @@ function getAdminPageUrl() {
   } catch (error) {
     verboseLog(
       'ADMIN PAGE URL CACHE READ FAILURE',
-      error && error.stack ? error.stack : String(error),
+      () => (error && error.stack ? error.stack : String(error)),
     );
   }
 
@@ -4500,7 +4560,7 @@ function storeAdminPageUrl_(value) {
   } catch (error) {
     verboseLog(
       'ADMIN PAGE URL CACHE WRITE FAILURE',
-      error && error.stack ? error.stack : String(error),
+      () => (error && error.stack ? error.stack : String(error)),
     );
   }
   return url;
@@ -4562,7 +4622,7 @@ function deleteAdminPageSetupTriggers_() {
     } catch (error) {
       verboseLog(
         'ADMIN PAGE SETUP TRIGGER DELETE FAILURE',
-        error && error.stack ? error.stack : String(error),
+        () => (error && error.stack ? error.stack : String(error)),
       );
     }
   });
@@ -4576,6 +4636,22 @@ function deleteAdminPageSetupTriggers_() {
  * @return {Object} Current setup status for the sidebar.
  */
 function ensureAdminPageSetupQueued_() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
+    return {
+      status: 'queued',
+      message: 'Advanced Settings setup is already being checked.',
+    };
+  }
+  try {
+    return ensureAdminPageSetupQueuedUnlocked_();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Performs first-open setup while the caller holds the script lock. */
+function ensureAdminPageSetupQueuedUnlocked_() {
   if (getAdminPageUrl()) {
     return { status: 'ready', message: '' };
   }
@@ -4698,7 +4774,7 @@ function rememberCurrentAdminPageUrl_() {
   } catch (error) {
     verboseLog(
       'ADMIN PAGE URL REGISTRATION FAILURE',
-      error && error.stack ? error.stack : String(error),
+      () => (error && error.stack ? error.stack : String(error)),
     );
     return '';
   }
@@ -4870,17 +4946,17 @@ function getLatestPublishedRelease() {
   if (cachedValue) {
     try {
       const cachedResult = JSON.parse(cachedValue);
-      verboseLog('UPDATE CHECK CACHE HIT', cachedResult);
+      verboseLog('UPDATE CHECK CACHE HIT', () => (cachedResult));
       return cachedResult.release || null;
     } catch (error) {
-      verboseLog('UPDATE CHECK CACHE PARSE FAILURE', String(error));
+      verboseLog('UPDATE CHECK CACHE PARSE FAILURE', () => (String(error)));
       cache.remove(cacheKey);
     }
   }
 
   try {
     const apiUrl = getLatestReleaseApiUrl();
-    verboseLog('UPDATE CHECK REQUEST', apiUrl);
+    verboseLog('UPDATE CHECK REQUEST', () => (apiUrl));
 
     const response = UrlFetchApp.fetch(apiUrl, {
       method: 'get',
@@ -4896,15 +4972,20 @@ function getLatestPublishedRelease() {
     const responseCode = response.getResponseCode();
     const responseText = response.getContentText();
 
-    verboseLog('UPDATE CHECK RESPONSE', {
+    verboseLog('UPDATE CHECK RESPONSE', () => ({
       responseCode,
       responsePreview: responseText.slice(0, 500),
-    });
+    }));
 
     if (responseCode !== 200) {
       console.warn(
         `GitHub update check returned HTTP ${responseCode}. The unsuccessful ` +
-          'result was not cached and will be retried on the next check.',
+          'result will be retried after a short cooldown.',
+      );
+      cache.put(
+        cacheKey,
+        JSON.stringify({ release: null, responseCode }),
+        RETENTION_CONFIG.UPDATE_CHECK_FAILURE_CACHE_SECONDS,
       );
       return null;
     }
@@ -4917,6 +4998,11 @@ function getLatestPublishedRelease() {
         tagName: payload.tag_name,
         releaseUrl: payload.html_url,
       });
+      cache.put(
+        cacheKey,
+        JSON.stringify({ release: null, responseCode }),
+        RETENTION_CONFIG.UPDATE_CHECK_FAILURE_CACHE_SECONDS,
+      );
       return null;
     }
 
@@ -4934,11 +5020,18 @@ function getLatestPublishedRelease() {
     return release;
   } catch (error) {
     console.warn(
-      'GitHub update check failed. The unsuccessful result was not cached and ' +
-        `will be retried on the next check: ${
-          error && error.message ? error.message : String(error)
-        }`,
+      'GitHub update check failed and will be retried after a short cooldown: ' +
+        (error && error.message ? error.message : String(error)),
     );
+    try {
+      cache.put(
+        cacheKey,
+        JSON.stringify({ release: null, responseCode: null }),
+        RETENTION_CONFIG.UPDATE_CHECK_FAILURE_CACHE_SECONDS,
+      );
+    } catch (cacheError) {
+      console.warn(`Unable to cache the update-check failure: ${cacheError.message}`);
+    }
     return null;
   }
 }
@@ -4969,17 +5062,17 @@ function getAvailableUpdate() {
       latestVersion,
       installedVersion,
     );
-    verboseLog('UPDATE CHECK COMPARISON', {
+    verboseLog('UPDATE CHECK COMPARISON', () => ({
       installedVersion: installedVersion.normalized,
       latestVersion: latestVersion.normalized,
       comparison,
-    });
+    }));
 
     return comparison > 0 ? latestRelease : null;
   } catch (error) {
     verboseLog(
       'UPDATE CHECK COMPARISON FAILURE',
-      error && error.stack ? error.stack : String(error),
+      () => (error && error.stack ? error.stack : String(error)),
     );
     return null;
   }
@@ -5104,6 +5197,323 @@ function recordUpdateOnlyNotification(availableUpdate) {
   );
 }
 
+/** @return {Array} Valid system emails whose post-send Gmail changes need retrying. */
+function getPendingManagedSystemEmails_() {
+  const stored = PropertiesService.getScriptProperties().getProperty(
+    RETENTION_PENDING_SYSTEM_EMAILS_PROPERTY_KEY,
+  );
+  if (!stored) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(stored);
+    if (
+      !isConfigurationObject(parsed) ||
+      parsed.schemaVersion !== RETENTION_PENDING_SYSTEM_EMAILS_SCHEMA_VERSION ||
+      !Array.isArray(parsed.emails)
+    ) {
+      throw new Error('unsupported pending-system-email state');
+    }
+    return parsed.emails.filter(item =>
+      isConfigurationObject(item) &&
+      typeof item.messageId === 'string' && item.messageId &&
+      typeof item.threadId === 'string' && item.threadId &&
+      typeof item.systemLabelName === 'string' && item.systemLabelName &&
+      typeof item.retentionLabelName === 'string' && item.retentionLabelName,
+    );
+  } catch (error) {
+    console.error(
+      `Ignoring invalid ${RETENTION_PENDING_SYSTEM_EMAILS_PROPERTY_KEY}: ` +
+        getRuntimeErrorMessage(error),
+    );
+    return [];
+  }
+}
+
+/** Persists the pending post-send Gmail work queue. */
+function savePendingManagedSystemEmails_(emails) {
+  const properties = PropertiesService.getScriptProperties();
+  if (emails.length === 0) {
+    properties.deleteProperty(RETENTION_PENDING_SYSTEM_EMAILS_PROPERTY_KEY);
+    return;
+  }
+  properties.setProperty(
+    RETENTION_PENDING_SYSTEM_EMAILS_PROPERTY_KEY,
+    JSON.stringify({
+      schemaVersion: RETENTION_PENDING_SYSTEM_EMAILS_SCHEMA_VERSION,
+      emails,
+    }),
+  );
+}
+
+/** Adds or replaces one pending post-send Gmail operation. */
+function rememberPendingManagedSystemEmail_(entry) {
+  const emails = getPendingManagedSystemEmails_().filter(
+    item => item.messageId !== entry.messageId,
+  );
+  savePendingManagedSystemEmails_([...emails, entry]);
+}
+
+/** Removes one completed post-send Gmail operation. */
+function forgetPendingManagedSystemEmail_(messageId) {
+  savePendingManagedSystemEmails_(
+    getPendingManagedSystemEmails_().filter(item => item.messageId !== messageId),
+  );
+}
+
+/** Applies the managed labels and Inbox state; the operation is safe to retry. */
+function applyManagedSystemEmailState_(entry) {
+  const systemLabel = getOrCreateLabel(entry.systemLabelName);
+  const retentionLabel = getOrCreateLabel(entry.retentionLabelName);
+  executeGmailApiWithRetry_(() => Gmail.Users.Threads.modify(
+    {
+      addLabelIds: [systemLabel.getId(), retentionLabel.getId(), 'INBOX', 'UNREAD'],
+      removeLabelIds: ['SPAM'],
+    },
+    'me',
+    entry.threadId,
+  ));
+  invalidateGmailApiCaches_();
+}
+
+/** Retries post-send Gmail work without resending already-delivered emails. */
+function retryPendingManagedSystemEmails_() {
+  for (const entry of getPendingManagedSystemEmails_()) {
+    try {
+      applyManagedSystemEmailState_(entry);
+      forgetPendingManagedSystemEmail_(entry.messageId);
+    } catch (error) {
+      console.error(
+        `Unable to finish managing sent system email ${entry.messageId}: ` +
+          getRuntimeErrorMessage(error),
+      );
+    }
+  }
+}
+
+/** Removes every property used by the durable deletion-report outbox. */
+function clearDeletionReportOutbox_() {
+  const properties = PropertiesService.getScriptProperties();
+  const keys = Object.keys(properties.getProperties()).filter(key =>
+    key === RETENTION_DELETION_OUTBOX_PROPERTY_KEY ||
+      key.startsWith(RETENTION_DELETION_OUTBOX_CHUNK_PREFIX),
+  );
+  if (keys.length > 0) {
+    keys.forEach(key => properties.deleteProperty(key));
+  }
+}
+
+/** Converts a report record into a JSON-safe durable representation. */
+function serializeDeletionReportRecord_(record) {
+  return {
+    messageId: String(record.messageId || ''),
+    subject: String(record.subject || '(no subject)'),
+    sender: String(record.sender || '(unknown sender)'),
+    receivedAt: new Date(record.receivedAt).toISOString(),
+    retentionLabel: String(record.retentionLabel || ''),
+    trashPermalink: String(record.trashPermalink || ''),
+  };
+}
+
+/** Converts a stored report record back to the format used by email builders. */
+function deserializeDeletionReportRecord_(record) {
+  return {
+    ...record,
+    receivedAt: new Date(record.receivedAt),
+  };
+}
+
+/** Persists a compressed deletion report without exceeding per-property limits. */
+function saveDeletionReportOutbox_(outbox) {
+  const serializable = {
+    schemaVersion: RETENTION_DELETION_OUTBOX_SCHEMA_VERSION,
+    id: String(outbox.id || Utilities.getUuid()),
+    state: outbox.state === 'ready' ? 'ready' : 'planned',
+    runDate: new Date(outbox.runDate).toISOString(),
+    availableUpdate: outbox.availableUpdate || null,
+    sentPartCount: Math.max(0, Number(outbox.sentPartCount) || 0),
+    records: outbox.records.map(serializeDeletionReportRecord_),
+  };
+  const compressed = Utilities.gzip(
+    Utilities.newBlob(JSON.stringify(serializable), 'application/json'),
+  );
+  const encoded = Utilities.base64EncodeWebSafe(compressed.getBytes());
+  if (encoded.length > RETENTION_DELETION_OUTBOX_MAX_ENCODED_CHARACTERS) {
+    throw new Error(
+      'The deletion report is too large to preserve safely. No messages were ' +
+        'moved to Trash. Reduce the number of expired messages and run again.',
+    );
+  }
+
+  const properties = PropertiesService.getScriptProperties();
+  const existingMetadataValue = properties.getProperty(
+    RETENTION_DELETION_OUTBOX_PROPERTY_KEY,
+  );
+  let activeStorageId = '';
+  try {
+    const existingMetadata = existingMetadataValue
+      ? JSON.parse(existingMetadataValue)
+      : null;
+    activeStorageId = existingMetadata &&
+        typeof existingMetadata.storageId === 'string'
+      ? existingMetadata.storageId
+      : '';
+  } catch (error) {
+    activeStorageId = '';
+  }
+  const activeChunkPrefix = activeStorageId
+    ? `${RETENTION_DELETION_OUTBOX_CHUNK_PREFIX}${activeStorageId}_`
+    : '';
+  Object.keys(properties.getProperties())
+    .filter(key =>
+      key.startsWith(RETENTION_DELETION_OUTBOX_CHUNK_PREFIX) &&
+        (!activeChunkPrefix || !key.startsWith(activeChunkPrefix)),
+    )
+    .forEach(key => properties.deleteProperty(key));
+
+  const storageId = Utilities.getUuid();
+  const newChunkPrefix =
+    `${RETENTION_DELETION_OUTBOX_CHUNK_PREFIX}${storageId}_`;
+  const chunks = chunkArray(
+    encoded.split(''),
+    RETENTION_DELETION_OUTBOX_CHUNK_SIZE,
+  ).map(chunk => chunk.join(''));
+  const values = {};
+  chunks.forEach((chunk, index) => {
+    values[`${newChunkPrefix}${index}`] = chunk;
+  });
+  properties.setProperties(values, false);
+  properties.setProperty(
+    RETENTION_DELETION_OUTBOX_PROPERTY_KEY,
+    JSON.stringify({
+      schemaVersion: RETENTION_DELETION_OUTBOX_SCHEMA_VERSION,
+      chunkCount: chunks.length,
+      id: serializable.id,
+      storageId,
+    }),
+  );
+  Object.keys(properties.getProperties())
+    .filter(key =>
+      key.startsWith(RETENTION_DELETION_OUTBOX_CHUNK_PREFIX) &&
+        !key.startsWith(newChunkPrefix),
+    )
+    .forEach(key => properties.deleteProperty(key));
+  return serializable;
+}
+
+/** @return {?Object} Valid pending deletion report, or null when none exists. */
+function getDeletionReportOutbox_() {
+  const properties = PropertiesService.getScriptProperties();
+  const storedMetadata = properties.getProperty(
+    RETENTION_DELETION_OUTBOX_PROPERTY_KEY,
+  );
+  if (!storedMetadata) {
+    return null;
+  }
+
+  try {
+    const metadata = JSON.parse(storedMetadata);
+    if (
+      !isConfigurationObject(metadata) ||
+      metadata.schemaVersion !== RETENTION_DELETION_OUTBOX_SCHEMA_VERSION ||
+      !Number.isInteger(metadata.chunkCount) ||
+      metadata.chunkCount < 1 ||
+      typeof metadata.storageId !== 'string' ||
+      !metadata.storageId
+    ) {
+      throw new Error('invalid deletion-report metadata');
+    }
+    let encoded = '';
+    for (let index = 0; index < metadata.chunkCount; index += 1) {
+      const chunk = properties.getProperty(
+        `${RETENTION_DELETION_OUTBOX_CHUNK_PREFIX}` +
+          `${metadata.storageId}_${index}`,
+      );
+      if (!chunk) {
+        throw new Error(`missing deletion-report chunk ${index}`);
+      }
+      encoded += chunk;
+    }
+    const json = Utilities.ungzip(
+      Utilities.newBlob(
+        Utilities.base64DecodeWebSafe(encoded),
+        'application/gzip',
+        'deletion-report.json.gz',
+      ),
+    ).getDataAsString();
+    const parsed = JSON.parse(json);
+    if (
+      !isConfigurationObject(parsed) ||
+      parsed.schemaVersion !== RETENTION_DELETION_OUTBOX_SCHEMA_VERSION ||
+      !['planned', 'ready'].includes(parsed.state) ||
+      !Array.isArray(parsed.records) ||
+      typeof parsed.runDate !== 'string'
+    ) {
+      throw new Error('invalid deletion-report payload');
+    }
+    return {
+      ...parsed,
+      records: parsed.records.map(deserializeDeletionReportRecord_),
+    };
+  } catch (error) {
+    throw new Error(
+      `The pending deletion report could not be recovered: ` +
+        getRuntimeErrorMessage(error),
+    );
+  }
+}
+
+/** Determines which planned messages reached Trash before an interrupted run. */
+function finalizePlannedDeletionReport_(outbox) {
+  const records = outbox.records.filter(record => {
+    try {
+      const message = executeGmailApiReadWithRetry_(() =>
+        Gmail.Users.Messages.get('me', record.messageId, { format: 'minimal' }),
+      );
+      return Array.isArray(message.labelIds) && message.labelIds.includes('TRASH');
+    } catch (error) {
+      if (/\b404\b|not found/i.test(getRuntimeErrorMessage(error))) {
+        return true;
+      }
+      throw error;
+    }
+  });
+  return saveDeletionReportOutbox_({
+    ...outbox,
+    state: 'ready',
+    sentPartCount: 0,
+    records,
+  });
+}
+
+/** Delivers and clears a pending report, resuming after its last completed part. */
+function deliverDeletionReportOutbox_() {
+  let outbox = getDeletionReportOutbox_();
+  if (!outbox) {
+    return 0;
+  }
+  if (outbox.state === 'planned') {
+    outbox = finalizePlannedDeletionReport_(outbox);
+  }
+  if (outbox.records.length === 0) {
+    clearDeletionReportOutbox_();
+    return 0;
+  }
+
+  const sentCount = sendDeletionSummaries(
+    outbox.records,
+    new Date(outbox.runDate),
+    outbox.availableUpdate,
+    outbox.sentPartCount,
+    sentPartCount => {
+      outbox = saveDeletionReportOutbox_({ ...outbox, sentPartCount });
+    },
+  );
+  clearDeletionReportOutbox_();
+  return sentCount;
+}
+
 /**
  * Compares Gmail label names after normalizing separators, spacing, and case.
  *
@@ -5135,26 +5545,44 @@ function escapeRegExp(value) {
  * @return {Object} Serializable outcome of the retention run.
  */
 function enforceGmailRetention(event) {
-  const startedAt = new Date();
-  const queuedSidebarRun = prepareQueuedRetentionRun_(event);
-  const runSource = queuedSidebarRun ? 'manual' : getRetentionRunSource(event);
-  rememberCurrentAdminPageUrl_();
-  const startedState = {
-    lastRunSource: runSource,
-    lastRunStatus: 'running',
-    lastRunQueuedAt: null,
-    lastRunStartedAt: startedAt.toISOString(),
-    lastRunCompletedAt: null,
-    lastResult: null,
-  };
-  if (runSource === 'scheduled') {
-    startedState.lastScheduledRunStartedAt = startedAt.toISOString();
-  } else {
-    startedState.lastManualRunStartedAt = startedAt.toISOString();
+  const queuedRequest = getQueuedRetentionRunRequest_();
+  const eventTriggerId = event && typeof event.triggerUid === 'string'
+    ? event.triggerUid
+    : '';
+  const queuedSidebarEvent = Boolean(
+    queuedRequest && queuedRequest.triggerId === eventTriggerId,
+  );
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
+    const reason = 'Another retention run is already active. This run was skipped.';
+    console.log(reason);
+    return {
+      status: 'skipped',
+      reason,
+    };
   }
-  updateRetentionRuntimeStateSafely(startedState);
 
+  const startedAt = new Date();
+  let runSource = queuedSidebarEvent ? 'manual' : getRetentionRunSource(event);
   try {
+    const queuedSidebarRun = prepareQueuedRetentionRun_(event);
+    runSource = queuedSidebarRun ? 'manual' : runSource;
+    rememberCurrentAdminPageUrl_();
+    const startedState = {
+      lastRunSource: runSource,
+      lastRunStatus: 'running',
+      lastRunQueuedAt: null,
+      lastRunStartedAt: startedAt.toISOString(),
+      lastRunCompletedAt: null,
+      lastResult: null,
+    };
+    if (runSource === 'scheduled') {
+      startedState.lastScheduledRunStartedAt = startedAt.toISOString();
+    } else {
+      startedState.lastManualRunStartedAt = startedAt.toISOString();
+    }
+    updateRetentionRuntimeStateSafely(startedState);
+
     const result = executeGmailRetention_();
     const completedAt = new Date();
     const completedResult = {
@@ -5213,6 +5641,8 @@ function enforceGmailRetention(event) {
     }
     updateRetentionRuntimeStateSafely(failedState);
     throw error;
+  } finally {
+    lock.releaseLock();
   }
 }
 
@@ -5220,26 +5650,18 @@ function enforceGmailRetention(event) {
 function executeGmailRetention_() {
   const settings = getRetentionSettings();
   verboseLog('MAIN', 'enforceGmailRetention() entered.');
-  const lock = LockService.getScriptLock();
-  verboseLog('LOCK', `Attempting script lock for ${RETENTION_CONFIG.LOCK_TIMEOUT_MS} ms.`);
-
-  if (!lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
-    const reason = 'Another retention run is already active. This run was skipped.';
-    console.log(reason);
-    return {
-      status: 'skipped',
-      reason,
-    };
-  }
-
   try {
     verboseLog('LOCK', 'Script lock acquired.');
     const now = new Date();
+    const retentionTimeZone = getConfiguredRetentionTimeZone();
     const availableUpdate = getAvailableUpdate();
     const effectiveUserEmail = Session.getEffectiveUser().getEmail();
     const activeUserEmail = Session.getActiveUser().getEmail();
+    const notificationRecipient = getNotificationRecipient();
+    retryPendingManagedSystemEmails_();
+    deliverDeletionReportOutbox_();
 
-    verboseLog('SESSION', {
+    verboseLog('SESSION', () => ({
       effectiveUserEmail,
       activeUserEmail,
       scriptTimeZone: Session.getScriptTimeZone(),
@@ -5253,7 +5675,7 @@ function executeGmailRetention_() {
           getSystemNotificationLabelName(),
         archiveOnLabel: settings.ARCHIVE_ON_LABEL,
       },
-    });
+    }));
 
     console.log(
       `Starting ${RETENTION_CONFIG.APPLICATION_NAME} ` +
@@ -5267,20 +5689,20 @@ function executeGmailRetention_() {
     const initializedLabels = initializeDefaultRetentionLabels();
     verboseLog(
       'INITIALIZATION',
-      `initializeDefaultRetentionLabels() returned ${initializedLabels.length} label(s).`,
+      () => (`initializeDefaultRetentionLabels() returned ${initializedLabels.length} label(s).`),
     );
     verboseLabelSnapshot('LABELS AFTER INITIALIZATION');
 
     const discoveredRetentionLabels = discoverRetentionLabels(initializedLabels);
     verboseLog(
       'DISCOVERY',
-      `Discovered ${discoveredRetentionLabels.length} valid retention policy label(s).`,
+      () => (`Discovered ${discoveredRetentionLabels.length} valid retention policy label(s).`),
     );
     const systemNotificationLabel = GmailApiApp.getUserLabelByName(
       getSystemNotificationLabelName(),
     );
 
-    verboseLog('SYSTEM LABEL LOOKUP', describeLabel(systemNotificationLabel));
+    verboseLog('SYSTEM LABEL LOOKUP', () => (describeLabel(systemNotificationLabel)));
 
     if (
       discoveredRetentionLabels.length === 0 &&
@@ -5324,22 +5746,22 @@ function executeGmailRetention_() {
       discoveredRetentionLabels,
       systemNotificationLabel,
     );
-    verboseLog('THREAD COLLECTION', `Collected ${threadMap.size} unique thread(s).`);
+    verboseLog('THREAD COLLECTION', () => (`Collected ${threadMap.size} unique thread(s).`));
     preflightGmailApiThreads_(threadMap);
     const pendingDeletions = [];
     const excludedArchiveMessageIds = new Set();
     let removedRetentionLabelCount = 0;
 
     for (const thread of threadMap.values()) {
-      verboseLog('THREAD', `Processing thread ${thread.getId()}.`);
+      verboseLog('THREAD', () => (`Processing thread ${thread.getId()}.`));
       const threadLabels = thread.getLabels();
       const threadIsInTrash = thread.isInTrash();
       const messages = thread.getMessages();
-      verboseLog('THREAD LABELS', {
+      verboseLog('THREAD LABELS', () => ({
         threadId: thread.getId(),
         labels: threadLabels.map(label => label.getName()),
         isInTrash: threadIsInTrash,
-      });
+      }));
       const isSystemNotification = threadLabels.some(
         label => labelNamesEqual(label.getName(), getSystemNotificationLabelName()),
       );
@@ -5350,13 +5772,13 @@ function executeGmailRetention_() {
           excludedArchiveMessageIds.add(message.getId());
         });
       }
-      verboseLog('THREAD MESSAGES', {
+      verboseLog('THREAD MESSAGES', () => ({
         threadId: thread.getId(),
         messageCount: messages.length,
         activeMessageCount: activeMessages.length,
         trashedMessageCount: messages.length - activeMessages.length,
         subjects: messages.map(message => message.getSubject() || '(no subject)'),
-      });
+      }));
 
       /*
        * A user may manually trash a generated summary before its configured
@@ -5366,14 +5788,14 @@ function executeGmailRetention_() {
        * can report a mixed Inbox/Trash conversation itself as being in Trash.
        */
       if (activeMessages.length === 0) {
-        verboseLog('THREAD TRASH STATE', {
+        verboseLog('THREAD TRASH STATE', () => ({
           threadId: thread.getId(),
           threadIsInTrash,
           isSystemNotification,
           action: isSystemNotification
             ? 'Remove temporary notification labels and skip'
             : 'Skip conversation with no active messages',
-        });
+        }));
         if (isSystemNotification) {
           removeSystemNotificationLabels(thread);
         }
@@ -5381,33 +5803,33 @@ function executeGmailRetention_() {
       }
 
       if (threadIsInTrash) {
-        verboseLog('THREAD TRASH STATE', {
+        verboseLog('THREAD TRASH STATE', () => ({
           threadId: thread.getId(),
           threadIsInTrash,
           activeMessageCount: activeMessages.length,
           action: 'Process active messages in mixed-state conversation',
-        });
+        }));
       }
 
       const newestMessage = getNewestMessage(messages);
-      verboseLog('THREAD NEWEST MESSAGE', {
+      verboseLog('THREAD NEWEST MESSAGE', () => ({
         threadId: thread.getId(),
         subject: newestMessage.getSubject() || '(no subject)',
         date: newestMessage.getDate().toISOString(),
-      });
+      }));
 
       let policies = threadLabels
         .map(label => parseRetentionLabel(label))
         .filter(policy => policy !== null);
 
-      verboseLog('THREAD POLICIES', {
+      verboseLog('THREAD POLICIES', () => ({
         threadId: thread.getId(),
         policies: policies.map(policy => ({
           labelName: policy.labelName,
           amount: policy.amount,
           unit: policy.unit,
         })),
-      });
+      }));
 
       /*
        * System notifications always use the configured notification-retention
@@ -5428,56 +5850,61 @@ function executeGmailRetention_() {
         policies,
         newestMessage.getDate(),
         isSystemNotification,
+        retentionTimeZone,
       );
 
-      verboseLog('WINNING POLICY', {
+      verboseLog('WINNING POLICY', () => ({
         threadId: thread.getId(),
         labelName: winningPolicy.labelName,
         expiresAt: winningPolicy.expiresAt.toISOString(),
         now: now.toISOString(),
-      });
+      }));
 
       // Keep exactly one valid retention label to eliminate conflicting UI state.
       for (const policy of policies) {
         if (policy.label.getId() !== winningPolicy.label.getId()) {
-          verboseLog('REMOVE REDUNDANT LABEL', {
+          verboseLog('REMOVE REDUNDANT LABEL', () => ({
             threadId: thread.getId(),
             removedLabel: policy.labelName,
             retainedLabel: winningPolicy.labelName,
-          });
+          }));
           policy.label.removeFromThread(thread);
           removedRetentionLabelCount += 1;
         }
       }
 
       if (now.getTime() < winningPolicy.expiresAt.getTime()) {
-        verboseLog('RETENTION DECISION', {
+        verboseLog('RETENTION DECISION', () => ({
           threadId: thread.getId(),
           decision: 'KEEP',
           expiresAt: winningPolicy.expiresAt.toISOString(),
-        });
+        }));
         continue;
       }
 
-      verboseLog('RETENTION DECISION', {
+      verboseLog('RETENTION DECISION', () => ({
         threadId: thread.getId(),
         decision: 'MOVE_TO_TRASH',
         expiredAt: winningPolicy.expiresAt.toISOString(),
-      });
+      }));
 
       /*
        * Capture all message-level details before moving the thread to Trash.
        * The same permalink is used for every message because Gmail opens the
        * containing conversation, while sender/date/subject remain message-specific.
        */
+      const trashPermalink = isSystemNotification
+        ? ''
+        : buildTrashPermalink(thread, notificationRecipient);
       const messageRecords = isSystemNotification
         ? []
         : activeMessages.map(message => ({
+            messageId: message.getId(),
             subject: message.getSubject() || '(no subject)',
             sender: message.getFrom() || '(unknown sender)',
             receivedAt: message.getDate(),
             retentionLabel: winningPolicy.labelName,
-            trashPermalink: buildTrashPermalink(thread),
+            trashPermalink,
           }));
 
       pendingDeletions.push({
@@ -5497,8 +5924,33 @@ function executeGmailRetention_() {
           excludedArchiveMessageIds,
         )
       : createEmptyArchiveResult();
+    const plannedReportRecords = pendingDeletions.flatMap(item =>
+      item.isSystemNotification ? [] : item.messageRecords,
+    );
+    if (plannedReportRecords.length > 0) {
+      saveDeletionReportOutbox_({
+        state: 'planned',
+        runDate: now,
+        availableUpdate,
+        sentPartCount: 0,
+        records: plannedReportRecords,
+      });
+    }
     const deletionResult = movePendingMessagesToTrash(pendingDeletions);
     const deletedMessageRecords = deletionResult.deletedMessageRecords;
+    if (plannedReportRecords.length > 0) {
+      if (deletedMessageRecords.length > 0) {
+        saveDeletionReportOutbox_({
+          state: 'ready',
+          runDate: now,
+          availableUpdate,
+          sentPartCount: 0,
+          records: deletedMessageRecords,
+        });
+      } else {
+        clearDeletionReportOutbox_();
+      }
+    }
 
     // Delete the temporary internal label when no active notification uses it.
     deleteSystemNotificationLabelIfUnused();
@@ -5508,7 +5960,7 @@ function executeGmailRetention_() {
      * deletion is an expired system notification, no new notification is sent.
      */
     const summaryEmailCount = deletedMessageRecords.length > 0
-      ? sendDeletionSummaries(deletedMessageRecords, now, availableUpdate)
+      ? deliverDeletionReportOutbox_()
       : 0;
     const updateOnlyEmailCount = deletedMessageRecords.length === 0
       ? sendUpdateOnlyNotificationIfNeeded(availableUpdate, now)
@@ -5560,8 +6012,6 @@ function executeGmailRetention_() {
     );
     throw error;
   } finally {
-    verboseLog('LOCK', 'Releasing script lock.');
-    lock.releaseLock();
     verboseLog('MAIN', 'enforceGmailRetention() exited.');
   }
 }
@@ -5580,7 +6030,7 @@ function initializeDefaultRetentionLabels() {
   verboseLog('INITIALIZATION', 'Checking whether starter labels are required.');
   const rootLabelName = getRootLabelName();
   const rootLabel = findUserLabelByName(rootLabelName);
-  verboseLog('INITIALIZATION ROOT LOOKUP', describeLabel(rootLabel));
+  verboseLog('INITIALIZATION ROOT LOOKUP', () => (describeLabel(rootLabel)));
 
   if (rootLabel) {
     console.log(
@@ -5596,19 +6046,19 @@ function initializeDefaultRetentionLabels() {
    */
   verboseLog(
     'INITIALIZATION',
-    `No configured root label (${rootLabelName}) was found. ` +
-      'Starter-label creation will begin.',
+    () => (`No configured root label (${rootLabelName}) was found. ` +
+      'Starter-label creation will begin.'),
   );
 
   const requestedLabelNames = [
     rootLabelName,
     ...getDefaultRetentionLabelNames(),
   ];
-  verboseLog('INITIALIZATION REQUESTED LABELS', requestedLabelNames);
+  verboseLog('INITIALIZATION REQUESTED LABELS', () => (requestedLabelNames));
   const createdLabels = requestedLabelNames.map(labelName => {
-    verboseLog('INITIALIZATION CREATE', `Requesting label ${labelName}.`);
+    verboseLog('INITIALIZATION CREATE', () => (`Requesting label ${labelName}.`));
     const label = getOrCreateLabel(labelName);
-    verboseLog('INITIALIZATION CREATE RESULT', describeLabel(label));
+    verboseLog('INITIALIZATION CREATE RESULT', () => (describeLabel(label)));
     return label;
   });
 
@@ -5637,45 +6087,16 @@ function initializeDefaultRetentionLabels() {
 }
 
 /**
- * Optional setup-only entry point. Run this manually when testing installation
- * or permissions. It creates the starter labels when appropriate and logs every
- * retention policy the script can currently recognize without processing mail.
+ * Read-only diagnostic entry point. It discovers labels but never creates labels
+ * or reads, relabels, or trashes Gmail conversations.
  */
-function setupGmailRetention() {
-  verboseLog('SETUP', 'setupGmailRetention() entered.');
-  const effectiveUserEmail = Session.getEffectiveUser().getEmail();
-  console.log(
-    `Setting up ${RETENTION_CONFIG.APPLICATION_NAME} ` +
-      `${RETENTION_CONFIG.VERSION}` +
-    `${effectiveUserEmail ? ` for ${effectiveUserEmail}` : ''}.`,
-  );
-
-  const initializedLabels = initializeDefaultRetentionLabels();
-  const policies = discoverRetentionLabels(initializedLabels);
-  const policyNames = policies.map(policy => policy.labelName);
-
-  console.log(
-    policyNames.length > 0
-      ? `Recognized retention labels: ${policyNames.join(', ')}`
-      : 'No valid retention labels were recognized after setup.',
-  );
-  verboseLabelSnapshot('SETUP FINAL LABEL SNAPSHOT');
-  verboseLog('SETUP', 'setupGmailRetention() exited.');
-}
-
-/**
- * Diagnostic-only entry point. It performs setup and label discovery but never
- * reads, relabels, or trashes any Gmail conversation. Set VERBOSE_LOGGING to
- * true, save the project, and run this function while troubleshooting.
- */
-function diagnoseGmailRetentionLabels() {
+function runRetentionLabelDiagnostics() {
   console.log(
     `Starting label diagnostics for ${RETENTION_CONFIG.APPLICATION_NAME} ` +
       `${RETENTION_CONFIG.VERSION}.`,
   );
   verboseLabelSnapshot('DIAGNOSTIC INITIAL LABEL SNAPSHOT');
-  const initializedLabels = initializeDefaultRetentionLabels();
-  const policies = discoverRetentionLabels(initializedLabels);
+  const policies = discoverRetentionLabels();
   verboseLabelSnapshot('DIAGNOSTIC FINAL LABEL SNAPSHOT');
   console.log(
     `Label diagnostics complete. Recognized ${policies.length} valid ` +
@@ -5695,30 +6116,30 @@ function diagnoseGmailRetentionLabels() {
  * @return {{label: GmailLabel, amount: number, unit: string, labelName: string}[]}
  */
 function discoverRetentionLabels(initializedLabels = []) {
-  verboseLog('DISCOVERY', {
+  verboseLog('DISCOVERY', () => ({
     initializedLabelCount: initializedLabels.length,
     initializedLabels: initializedLabels.map(label => label.getName()),
-  });
+  }));
   const labelsByName = new Map();
 
   const gmailLabels = GmailApiApp.getUserLabels();
-  verboseLog('DISCOVERY RAW GMAIL LABELS', gmailLabels.map(describeLabel));
+  verboseLog('DISCOVERY RAW GMAIL LABELS', () => (gmailLabels.map(describeLabel)));
 
   for (const label of [
     ...gmailLabels,
     ...initializedLabels,
   ]) {
     const normalizedName = normalizeRetentionLabelName(label.getName());
-    verboseLog('DISCOVERY NORMALIZE LABEL', {
+    verboseLog('DISCOVERY NORMALIZE LABEL', () => ({
       rawName: label.getName(),
       normalizedName,
       id: safeGetLabelId(label),
-    });
+    }));
     labelsByName.set(normalizedName.toLowerCase(), label);
   }
 
   const allLabels = [...labelsByName.values()];
-  verboseLog('DISCOVERY UNIQUE LABEL COUNT', allLabels.length);
+  verboseLog('DISCOVERY UNIQUE LABEL COUNT', () => (allLabels.length));
   const policies = allLabels
     .map(label => parseRetentionLabel(label))
     .filter(policy => policy !== null);
@@ -5763,12 +6184,12 @@ function parseRetentionLabel(label) {
   const match = normalizedLabelName.match(getRetentionLabelPattern());
 
   if (!match) {
-    verboseLog('PARSE LABEL', {
+    verboseLog('PARSE LABEL', () => ({
       labelName,
       normalizedLabelName,
       valid: false,
       reason: 'Does not match the configured root label and retention format',
-    });
+    }));
     return null;
   }
 
@@ -5777,19 +6198,19 @@ function parseRetentionLabel(label) {
   const unit = RETENTION_CONFIG.UNIT_ALIASES[unitAlias];
 
   if (!unit) {
-    verboseLog('PARSE LABEL', {
+    verboseLog('PARSE LABEL', () => ({
       labelName,
       normalizedLabelName,
       valid: false,
       reason: 'Unrecognized retention unit alias',
       unitAlias,
-    });
+    }));
     return null;
   }
 
   // Zero-length periods are intentionally rejected.
   if (!Number.isSafeInteger(amount) || amount <= 0) {
-    verboseLog('PARSE LABEL', {
+    verboseLog('PARSE LABEL', () => ({
       labelName,
       normalizedLabelName,
       valid: false,
@@ -5797,18 +6218,18 @@ function parseRetentionLabel(label) {
       amount,
       unitAlias,
       unit,
-    });
+    }));
     return null;
   }
 
-  verboseLog('PARSE LABEL', {
+  verboseLog('PARSE LABEL', () => ({
     labelName,
     normalizedLabelName,
     valid: true,
     amount,
     unitAlias,
     canonicalUnit: unit,
-  });
+  }));
 
   return {
     label,
@@ -5846,10 +6267,10 @@ function normalizeRetentionLabelName(value) {
  * @return {Map<string, GmailThread>} Map keyed by Gmail thread ID.
  */
 function collectUniqueThreads(retentionPolicies, systemNotificationLabel) {
-  verboseLog('THREAD COLLECTION INPUT', {
+  verboseLog('THREAD COLLECTION INPUT', () => ({
     retentionPolicies: retentionPolicies.map(policy => policy.labelName),
     systemNotificationLabel: describeLabel(systemNotificationLabel),
-  });
+  }));
   const threadMap = new Map();
 
   for (const policy of retentionPolicies) {
@@ -5871,7 +6292,7 @@ function collectUniqueThreads(retentionPolicies, systemNotificationLabel) {
 function preflightGmailApiThreads_(threadMap) {
   verboseLog(
     'THREAD PREFLIGHT',
-    `Validating ${threadMap.size} conversation(s) before processing.`,
+    () => (`Validating ${threadMap.size} conversation(s) before processing.`),
   );
   for (const thread of threadMap.values()) {
     try {
@@ -5909,10 +6330,10 @@ function preflightGmailApiThreads_(threadMap) {
  */
 function addLabelThreadsToMap(label, threadMap) {
   let start = 0;
-  verboseLog('LABEL THREAD ENUMERATION', {
+  verboseLog('LABEL THREAD ENUMERATION', () => ({
     label: describeLabel(label),
     pageSize: RETENTION_CONFIG.THREAD_PAGE_SIZE,
-  });
+  }));
 
   while (true) {
     const threads = label.getThreads(
@@ -5920,12 +6341,12 @@ function addLabelThreadsToMap(label, threadMap) {
       RETENTION_CONFIG.THREAD_PAGE_SIZE,
     );
 
-    verboseLog('LABEL THREAD PAGE', {
+    verboseLog('LABEL THREAD PAGE', () => ({
       labelName: label.getName(),
       start,
       returnedThreadCount: threads.length,
       threadIds: threads.map(thread => thread.getId()),
-    });
+    }));
 
     for (const thread of threads) {
       const existingThread = threadMap.get(thread.getId());
@@ -6001,14 +6422,16 @@ function ensureSystemNotificationPolicy(thread, policies) {
  * @param {Array} policies Parsed retention policies on the thread.
  * @param {Date} newestMessageDate Date of the newest message in the thread.
  * @param {boolean} isSystemNotification Whether the thread is script-generated.
+ * @param {string} timeZone Saved application time zone.
  * @return {Object} Winning policy including an expiresAt Date.
  */
 function chooseWinningPolicy(
   policies,
   newestMessageDate,
   isSystemNotification,
+  timeZone,
 ) {
-  verboseLog('POLICY COMPARISON INPUT', {
+  verboseLog('POLICY COMPARISON INPUT', () => ({
     newestMessageDate: newestMessageDate.toISOString(),
     isSystemNotification,
     policies: policies.map(policy => ({
@@ -6016,7 +6439,7 @@ function chooseWinningPolicy(
       amount: policy.amount,
       unit: policy.unit,
     })),
-  });
+  }));
 
   const evaluatedPolicies = policies.map(policy => ({
     ...policy,
@@ -6024,15 +6447,16 @@ function chooseWinningPolicy(
       newestMessageDate,
       policy.amount,
       policy.unit,
+      timeZone,
     ),
   }));
 
-  verboseLog('POLICY COMPARISON EVALUATED', evaluatedPolicies.map(policy => ({
+  verboseLog('POLICY COMPARISON EVALUATED', () => (evaluatedPolicies.map(policy => ({
     labelName: policy.labelName,
     amount: policy.amount,
     unit: policy.unit,
     expiresAt: policy.expiresAt.toISOString(),
-  })));
+  }))));
 
   if (isSystemNotification) {
     const requiredLabelName = getNotificationRetentionLabelName();
@@ -6046,11 +6470,11 @@ function chooseWinningPolicy(
       );
     }
 
-    verboseLog('POLICY COMPARISON WINNER', {
+    verboseLog('POLICY COMPARISON WINNER', () => ({
       labelName: requiredPolicy.labelName,
       expiresAt: requiredPolicy.expiresAt.toISOString(),
       reason: 'Configured system-notification policy is forced to win',
-    });
+    }));
     return requiredPolicy;
   }
 
@@ -6073,11 +6497,28 @@ function chooseWinningPolicy(
     a.labelName.localeCompare(b.labelName),
   );
 
-  verboseLog('POLICY COMPARISON WINNER', {
+  verboseLog('POLICY COMPARISON WINNER', () => ({
     labelName: evaluatedPolicies[0].labelName,
     expiresAt: evaluatedPolicies[0].expiresAt.toISOString(),
-  });
+  }));
   return evaluatedPolicies[0];
+}
+
+/** Returns calendar fields for one instant in the saved application time zone. */
+function getZonedDateTimeParts_(date, timeZone) {
+  const values = Utilities.formatDate(
+    date,
+    validateRetentionScheduleTimeZone(timeZone),
+    'yyyy,M,d,H,m,s',
+  ).split(',').map(Number);
+  return {
+    year: values[0],
+    month: values[1],
+    day: values[2],
+    hour: values[3],
+    minute: values[4],
+    second: values[5],
+  };
 }
 
 /**
@@ -6086,15 +6527,16 @@ function chooseWinningPolicy(
  * @param {Date} startDate Date from which retention begins.
  * @param {number} amount Positive integer amount.
  * @param {'min'|'h'|'d'|'w'|'m'|'y'} unit Retention unit.
+ * @param {string} timeZone Saved application time zone.
  * @return {Date} Calculated expiration date.
  */
-function addRetentionPeriod(startDate, amount, unit) {
+function addRetentionPeriod(startDate, amount, unit, timeZone) {
   const result = new Date(startDate.getTime());
-  verboseLog('ADD RETENTION PERIOD', {
+  verboseLog('ADD RETENTION PERIOD', () => ({
     startDate: startDate.toISOString(),
     amount,
     unit,
-  });
+  }));
 
   switch (unit) {
     case 'min':
@@ -6104,18 +6546,40 @@ function addRetentionPeriod(startDate, amount, unit) {
       return new Date(result.getTime() + amount * 60 * 60 * 1000);
 
     case 'd':
-      result.setDate(result.getDate() + amount);
-      return result;
-
     case 'w':
-      result.setDate(result.getDate() + amount * 7);
-      return result;
-
     case 'm':
-      return addCalendarMonthsClamped(result, amount);
-
-    case 'y':
-      return addCalendarMonthsClamped(result, amount * 12);
+    case 'y': {
+      const parts = getZonedDateTimeParts_(result, timeZone);
+      let calendarDate = new Date(Date.UTC(
+        parts.year,
+        parts.month - 1,
+        parts.day,
+        parts.hour,
+        parts.minute,
+        parts.second,
+        result.getUTCMilliseconds(),
+      ));
+      if (unit === 'd' || unit === 'w') {
+        calendarDate.setUTCDate(
+          calendarDate.getUTCDate() + amount * (unit === 'w' ? 7 : 1),
+        );
+      } else {
+        calendarDate = addUtcCalendarMonthsClamped_(
+          calendarDate,
+          amount * (unit === 'y' ? 12 : 1),
+        );
+      }
+      return createZonedDate_(
+        calendarDate.getUTCFullYear(),
+        calendarDate.getUTCMonth() + 1,
+        calendarDate.getUTCDate(),
+        calendarDate.getUTCHours(),
+        calendarDate.getUTCMinutes(),
+        timeZone,
+        calendarDate.getUTCSeconds(),
+        calendarDate.getUTCMilliseconds(),
+      );
+    }
 
     default:
       throw new Error(`Unsupported retention unit: ${unit}`);
@@ -6130,21 +6594,21 @@ function addRetentionPeriod(startDate, amount, unit) {
  * @param {number} monthCount Number of months to add.
  * @return {Date} Calendar-adjusted date.
  */
-function addCalendarMonthsClamped(startDate, monthCount) {
+function addUtcCalendarMonthsClamped_(startDate, monthCount) {
   const result = new Date(startDate.getTime());
-  const originalDay = result.getDate();
+  const originalDay = result.getUTCDate();
 
   // Move to day one before changing months to prevent JavaScript overflow.
-  result.setDate(1);
-  result.setMonth(result.getMonth() + monthCount);
+  result.setUTCDate(1);
+  result.setUTCMonth(result.getUTCMonth() + monthCount);
 
-  const lastDayOfTargetMonth = new Date(
-    result.getFullYear(),
-    result.getMonth() + 1,
+  const lastDayOfTargetMonth = new Date(Date.UTC(
+    result.getUTCFullYear(),
+    result.getUTCMonth() + 1,
     0,
-  ).getDate();
+  )).getUTCDate();
 
-  result.setDate(Math.min(originalDay, lastDayOfTargetMonth));
+  result.setUTCDate(Math.min(originalDay, lastDayOfTargetMonth));
   return result;
 }
 
@@ -6165,21 +6629,21 @@ function addCalendarMonthsClamped(startDate, monthCount) {
  *   https://mail.google.com/mail/u/?authuser=user%40example.com#trash/THREAD_ID
  *
  * @param {GmailThread} thread Gmail conversation being moved to Trash.
+ * @param {string} accountEmail Owning Gmail address resolved once per run.
  * @return {string} Gmail URL scoped to the owning account and Trash route.
  */
-function buildTrashPermalink(thread) {
+function buildTrashPermalink(thread, accountEmail) {
   const threadId = thread.getId();
-  const accountEmail = getNotificationRecipient();
   const trashPermalink =
     'https://mail.google.com/mail/u/?authuser=' +
     `${encodeURIComponent(accountEmail)}#trash/${encodeURIComponent(threadId)}`;
 
-  verboseLog('TRASH PERMALINK', {
+  verboseLog('TRASH PERMALINK', () => ({
     threadId,
     accountEmail,
     originalPermalink: String(thread.getPermalink() || ''),
     trashPermalink,
-  });
+  }));
 
   return trashPermalink;
 }
@@ -6342,10 +6806,10 @@ function archiveRetentionLabeledInboxMessages(
           candidateMessages.set(message.id, message);
         }
       });
-      verboseLog('ARCHIVE LABEL LOOKUP', {
+      verboseLog('ARCHIVE LABEL LOOKUP', () => ({
         labelName,
         directlyLabeledInboxMessageCount: messages.length,
-      });
+      }));
     } catch (error) {
       result.lookupFailureCount += 1;
       const message =
@@ -6378,11 +6842,11 @@ function archiveRetentionLabeledInboxMessages(
 
       result.archivedMessageCount += batch.length;
       batch.forEach(message => archivedThreadIds.add(message.threadId));
-      verboseLog('ARCHIVE BATCH', {
+      verboseLog('ARCHIVE BATCH', () => ({
         batchSize: batch.length,
         messageIds: batch.map(message => message.id),
         threadIds: [...new Set(batch.map(message => message.threadId))],
-      });
+      }));
     } catch (error) {
       result.failedMessageCount += batch.length;
       const message =
@@ -6398,8 +6862,8 @@ function archiveRetentionLabeledInboxMessages(
 }
 
 /**
- * Moves pending active messages to Trash in moderate batches. Messages are
- * moved individually because a conversation may contain both trashed and active
+ * Moves pending active messages to Trash. Messages are moved individually
+ * because a conversation may contain both trashed and active
  * messages. Report records are added only after the corresponding move succeeds.
  *
  * @param {Array} pendingDeletions Threads, active messages, and report data.
@@ -6422,57 +6886,36 @@ function movePendingMessagesToTrash(pendingDeletions) {
     });
   }
 
-  verboseLog('TRASH', {
+  verboseLog('TRASH', () => ({
     pendingThreadCount: pendingDeletions.length,
     pendingMessageCount: pendingMessages.length,
     threadIds: pendingDeletions.map(item => item.thread.getId()),
-  });
+  }));
   const deletedMessageRecords = [];
   const movedThreadIds = new Set();
   const systemNotificationThreads = new Map();
   let movedMessageCount = 0;
 
-  for (
-    let index = 0;
-    index < pendingMessages.length;
-    index += RETENTION_CONFIG.TRASH_BATCH_SIZE
-  ) {
-    const batch = pendingMessages.slice(
-      index,
-      index + RETENTION_CONFIG.TRASH_BATCH_SIZE,
-    );
-
-    verboseLog('TRASH BATCH', {
-      batchStartIndex: index,
-      batchSize: batch.length,
-      messageIds: batch.map(item => item.message.getId()),
-      threadIds: [...new Set(batch.map(item => item.thread.getId()))],
-    });
-
-    for (const item of batch) {
-      // Recheck immediately before the move in case the user manually trashed
-      // the message after collection but before this batch was processed.
-      if (item.message.isInTrash()) {
-        verboseLog('TRASH MESSAGE SKIP', {
-          messageId: item.message.getId(),
-          threadId: item.thread.getId(),
-          reason: 'Message is already in Trash',
-        });
-        continue;
-      }
-
-      item.message.moveToTrash();
-      movedMessageCount += 1;
-      movedThreadIds.add(item.thread.getId());
-
-      if (item.isSystemNotification) {
-        systemNotificationThreads.set(item.thread.getId(), item.thread);
-      } else if (item.messageRecord) {
-        deletedMessageRecords.push(item.messageRecord);
-      }
+  for (const item of pendingMessages) {
+    // Recheck in case the user manually trashed the message after collection.
+    if (item.message.isInTrash()) {
+      verboseLog('TRASH MESSAGE SKIP', () => ({
+        messageId: item.message.getId(),
+        threadId: item.thread.getId(),
+        reason: 'Message is already in Trash',
+      }));
+      continue;
     }
 
-    verboseLog('TRASH BATCH', 'Individual message moves completed.');
+    item.message.moveToTrash();
+    movedMessageCount += 1;
+    movedThreadIds.add(item.thread.getId());
+
+    if (item.isSystemNotification) {
+      systemNotificationThreads.set(item.thread.getId(), item.thread);
+    } else if (item.messageRecord) {
+      deletedMessageRecords.push(item.messageRecord);
+    }
   }
 
   for (const thread of systemNotificationThreads.values()) {
@@ -6562,7 +7005,7 @@ function getSystemNotificationDeliveryContext() {
  * @return {GmailMessage} Sent Gmail message.
  */
 function sendManagedSystemEmail(context, subject, plainBody, htmlBody) {
-  const sentMessage = GmailApiApp.createDraft(
+  const sentMessage = GmailApiApp.sendMessage(
     context.recipient,
     subject,
     plainBody,
@@ -6570,21 +7013,34 @@ function sendManagedSystemEmail(context, subject, plainBody, htmlBody) {
       htmlBody,
       name: RETENTION_CONFIG.APPLICATION_NAME,
     },
-  ).send();
+  );
   const notificationThread = sentMessage.getThread();
+  const pendingEntry = {
+    messageId: sentMessage.getId(),
+    threadId: notificationThread.getId(),
+    systemLabelName: context.systemLabel.getName(),
+    retentionLabelName: context.notificationRetentionLabel.getName(),
+    sentAt: new Date().toISOString(),
+  };
+  rememberPendingManagedSystemEmail_(pendingEntry);
+  try {
+    applyManagedSystemEmailState_(pendingEntry);
+    forgetPendingManagedSystemEmail_(pendingEntry.messageId);
+  } catch (error) {
+    console.error(
+      `System email ${pendingEntry.messageId} was sent, but its labels and Inbox ` +
+        `state could not be applied and will be retried: ` +
+        getRuntimeErrorMessage(error),
+    );
+  }
 
-  context.systemLabel.addToThread(notificationThread);
-  context.notificationRetentionLabel.addToThread(notificationThread);
-  notificationThread.moveToInbox();
-  notificationThread.markUnread();
-
-  verboseLog('SYSTEM EMAIL SENT', {
+  verboseLog('SYSTEM EMAIL SENT', () => ({
     subject,
     messageId: sentMessage.getId(),
     threadId: notificationThread.getId(),
     systemLabel: context.systemLabel.getName(),
     retentionLabel: context.notificationRetentionLabel.getName(),
-  });
+  }));
   return sentMessage;
 }
 
@@ -6596,17 +7052,25 @@ function sendManagedSystemEmail(context, subject, plainBody, htmlBody) {
  * @param {Array} records Deleted message records.
  * @param {Date} runDate Date the retention run occurred.
  * @param {Object|null} availableUpdate Newer GitHub release metadata.
- * @return {number} Number of summary emails sent.
+ * @param {number=} completedPartCount Previously delivered parts to skip.
+ * @param {Function=} onPartSent Called with the total completed part count.
+ * @return {number} Number of summary emails sent by this call.
  */
-function sendDeletionSummaries(records, runDate, availableUpdate) {
-  verboseLog('NOTIFICATION', {
+function sendDeletionSummaries(
+  records,
+  runDate,
+  availableUpdate,
+  completedPartCount = 0,
+  onPartSent = null,
+) {
+  verboseLog('NOTIFICATION', () => ({
     recordCount: records.length,
     runDate: runDate.toISOString(),
-  });
+  }));
   const deliveryContext = getSystemNotificationDeliveryContext();
   const timeZone = getConfiguredRetentionTimeZone();
   const adminPageUrl = getAdminPageUrl();
-  verboseLog('NOTIFICATION LABELS', {
+  verboseLog('NOTIFICATION LABELS', () => ({
     recipient: deliveryContext.recipient,
     systemLabel: describeLabel(deliveryContext.systemLabel),
     notificationRetentionLabel: describeLabel(
@@ -6615,7 +7079,7 @@ function sendDeletionSummaries(records, runDate, availableUpdate) {
     timeZone,
     adminPageUrl,
     availableUpdate,
-  });
+  }));
 
   // Present newest deleted messages first.
   records.sort(
@@ -6626,8 +7090,13 @@ function sendDeletionSummaries(records, runDate, availableUpdate) {
     records,
     RETENTION_CONFIG.MAX_ROWS_PER_NOTIFICATION,
   );
+  const firstPartIndex = Math.min(
+    chunks.length,
+    Math.max(0, Number(completedPartCount) || 0),
+  );
 
-  chunks.forEach((chunk, index) => {
+  chunks.slice(firstPartIndex).forEach((chunk, offset) => {
+    const index = firstPartIndex + offset;
     const partNumber = index + 1;
     const totalParts = chunks.length;
     const formattedRunDate = Utilities.formatDate(
@@ -6666,12 +7135,12 @@ function sendDeletionSummaries(records, runDate, availableUpdate) {
      * GmailDraft.send() returns the sent GmailMessage, allowing the script to
      * label, place, and mark the generated notification without searching for it.
      */
-    verboseLog('NOTIFICATION SEND', {
+    verboseLog('NOTIFICATION SEND', () => ({
       partNumber,
       totalParts,
       subject,
       rowCount: chunk.length,
-    });
+    }));
 
     const sentMessage = sendManagedSystemEmail(
       deliveryContext,
@@ -6679,13 +7148,16 @@ function sendDeletionSummaries(records, runDate, availableUpdate) {
       plainBody,
       htmlBody,
     );
-    verboseLog('NOTIFICATION SENT', {
+    verboseLog('NOTIFICATION SENT', () => ({
       messageId: sentMessage.getId(),
       threadId: sentMessage.getThread().getId(),
-    });
+    }));
+    if (typeof onPartSent === 'function') {
+      onPartSent(index + 1);
+    }
   });
 
-  return chunks.length;
+  return chunks.length - firstPartIndex;
 }
 
 /**
@@ -6701,9 +7173,9 @@ function sendUpdateOnlyNotificationIfNeeded(availableUpdate, runDate) {
   if (!availableUpdate || hasSentUpdateOnlyNotification(availableUpdate)) {
     verboseLog(
       'UPDATE-ONLY NOTIFICATION',
-      availableUpdate
+      () => (availableUpdate
         ? `Version ${availableUpdate.version} was already announced.`
-        : 'No newer release is available.',
+        : 'No newer release is available.'),
     );
     return 0;
   }
@@ -7125,11 +7597,11 @@ function getOrCreateLabel(labelName) {
   let currentPath = '';
   let deepestLabel = null;
 
-  verboseLog('GET OR CREATE LABEL', {
+  verboseLog('GET OR CREATE LABEL', () => ({
     requestedName: labelName,
     canonicalName,
     pathSegments,
-  });
+  }));
 
   /*
    * Create each level in order. For a path such as Root/7d, this verifies or
@@ -7142,16 +7614,16 @@ function getOrCreateLabel(labelName) {
     }
 
     currentPath = currentPath ? `${currentPath}/${segment}` : segment;
-    verboseLog('GET OR CREATE LABEL SEGMENT', { segment, currentPath });
+    verboseLog('GET OR CREATE LABEL SEGMENT', () => ({ segment, currentPath }));
 
     deepestLabel = findUserLabelByName(currentPath);
 
     if (deepestLabel) {
-      verboseLog('GET OR CREATE LABEL FOUND', describeLabel(deepestLabel));
+      verboseLog('GET OR CREATE LABEL FOUND', () => (describeLabel(deepestLabel)));
       continue;
     }
 
-    verboseLog('GET OR CREATE LABEL CREATE ATTEMPT', currentPath);
+    verboseLog('GET OR CREATE LABEL CREATE ATTEMPT', () => (currentPath));
     try {
       deepestLabel = GmailApiApp.createLabel(currentPath);
     } catch (error) {
@@ -7162,7 +7634,7 @@ function getOrCreateLabel(labelName) {
       throw error;
     }
 
-    verboseLog('GET OR CREATE LABEL CREATE RETURN', describeLabel(deepestLabel));
+    verboseLog('GET OR CREATE LABEL CREATE RETURN', () => (describeLabel(deepestLabel)));
 
     /*
      * Gmail normally exposes a newly created label immediately. Retry the lookup
@@ -7172,11 +7644,11 @@ function getOrCreateLabel(labelName) {
     let verifiedLabel = null;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       verifiedLabel = findUserLabelByName(currentPath);
-      verboseLog('GET OR CREATE LABEL VERIFY', {
+      verboseLog('GET OR CREATE LABEL VERIFY', () => ({
         currentPath,
         attempt,
         result: describeLabel(verifiedLabel),
-      });
+      }));
 
       if (verifiedLabel) {
         break;
@@ -7195,42 +7667,23 @@ function getOrCreateLabel(labelName) {
     deepestLabel = verifiedLabel;
   }
 
-  verboseLog('GET OR CREATE LABEL COMPLETE', describeLabel(deepestLabel));
+  verboseLog('GET OR CREATE LABEL COMPLETE', () => (describeLabel(deepestLabel)));
   return deepestLabel;
 }
 
 /**
- * Finds a user label by full name. Gmail's direct lookup is attempted first,
- * followed by a case-insensitive scan so a differently capitalized Retention
- * root is not duplicated.
+ * Finds a user label by full name using the cached case-insensitive label lookup.
  *
  * @param {string} labelName Full label path.
  * @return {GmailLabel|null} Matching label, or null when absent.
  */
 function findUserLabelByName(labelName) {
   const normalizedTarget = normalizeRetentionLabelName(labelName).toLowerCase();
-  verboseLog('FIND LABEL', { labelName, normalizedTarget });
+  verboseLog('FIND LABEL', () => ({ labelName, normalizedTarget }));
 
-  const directMatch = GmailApiApp.getUserLabelByName(labelName);
-  verboseLog('FIND LABEL DIRECT RESULT', describeLabel(directMatch));
-
-  if (directMatch) {
-    return directMatch;
-  }
-
-  const userLabels = GmailApiApp.getUserLabels();
-  const scannedMatch = userLabels.find(label =>
-    normalizeRetentionLabelName(label.getName()).toLowerCase() ===
-      normalizedTarget,
-  ) || null;
-
-  verboseLog('FIND LABEL SCAN RESULT', {
-    searchedName: labelName,
-    scannedLabelCount: userLabels.length,
-    result: describeLabel(scannedMatch),
-  });
-
-  return scannedMatch;
+  const match = GmailApiApp.getUserLabelByName(labelName);
+  verboseLog('FIND LABEL RESULT', () => describeLabel(match));
+  return match;
 }
 
 /**
@@ -7256,21 +7709,26 @@ function chunkArray(items, size) {
  * complete values instead of only "[object Object]".
  *
  * @param {string} step Short diagnostic step name.
- * @param {*} details Message or structured diagnostic details.
+ * @param {*|Function} details Message, structured details, or lazy factory.
  */
 function verboseLog(step, details) {
-  if (!getRetentionSettings().VERBOSE_LOGGING) {
+  if (!retentionSettingsCache) {
+    getRetentionSettings();
+  }
+  if (!verboseLoggingEnabled) {
     return;
   }
 
+  const resolvedDetails = typeof details === 'function' ? details() : details;
+
   let renderedDetails;
-  if (typeof details === 'string') {
-    renderedDetails = details;
+  if (typeof resolvedDetails === 'string') {
+    renderedDetails = resolvedDetails;
   } else {
     try {
-      renderedDetails = JSON.stringify(details, null, 2);
+      renderedDetails = JSON.stringify(resolvedDetails, null, 2);
     } catch (error) {
-      renderedDetails = String(details);
+      renderedDetails = String(resolvedDetails);
     }
   }
 
@@ -7285,7 +7743,10 @@ function verboseLog(step, details) {
  * @param {string} step Snapshot label used in the execution log.
  */
 function verboseLabelSnapshot(step) {
-  if (!getRetentionSettings().VERBOSE_LOGGING) {
+  if (!retentionSettingsCache) {
+    getRetentionSettings();
+  }
+  if (!verboseLoggingEnabled) {
     return;
   }
 
@@ -7300,7 +7761,7 @@ function verboseLabelSnapshot(step) {
     throw error;
   }
 
-  verboseLog(step, {
+  verboseLog(step, () => ({
     count: labels.length,
     labels: labels.map(label => ({
       id: safeGetLabelId(label),
@@ -7308,7 +7769,7 @@ function verboseLabelSnapshot(step) {
       normalizedName: normalizeRetentionLabelName(label.getName()),
       recognizedRetentionPolicy: Boolean(parseRetentionLabel(label)),
     })),
-  });
+  }));
 }
 
 /**

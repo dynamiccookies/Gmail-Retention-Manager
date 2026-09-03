@@ -384,7 +384,6 @@ not user preferences.
 | `UPDATE_CHECK_CACHE_SECONDS` | `21600` | GitHub response cache duration, in seconds |
 | `UNIT_ALIASES` | Built-in mapping | Maps readable unit names to canonical units |
 | `THREAD_PAGE_SIZE` | `100` | Number of labeled threads retrieved per Gmail page |
-| `TRASH_BATCH_SIZE` | `100` | Number of active messages processed per Trash batch |
 | `MAX_ROWS_PER_NOTIFICATION` | `200` | Maximum table rows in each notification email |
 | `LOCK_TIMEOUT_MS` | `5000` | Maximum time to wait for another execution to release the script lock |
 
@@ -393,7 +392,7 @@ not user preferences.
 | Function | Purpose |
 |---|---|
 | `enforceGmailRetention()` | Main retention processor; use this function for the scheduled trigger |
-| `diagnoseGmailRetentionLabels()` | Runs label setup and detailed label diagnostics without reading, relabeling, or trashing conversations |
+| `runRetentionLabelDiagnostics()` | Runs read-only label diagnostics without creating labels or reading, relabeling, or trashing conversations |
 | `getRetentionConfiguration()` | Initializes and returns the versioned active settings without changing Gmail |
 
 ## Verbose Diagnostics
@@ -407,7 +406,7 @@ Set:
 Then run:
 
 ```javascript
-diagnoseGmailRetentionLabels
+runRetentionLabelDiagnostics
 ```
 
 Verbose output includes:
@@ -452,7 +451,7 @@ Retention/7d
 Retention/6 months
 ```
 
-Run `diagnoseGmailRetentionLabels()` with verbose logging enabled to see exactly how every Gmail label is being parsed.
+Run `runRetentionLabelDiagnostics()` with verbose logging enabled to see exactly how every Gmail label is being parsed.
 
 ### A short retention period did not run on time
 
