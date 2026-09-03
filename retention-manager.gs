@@ -6519,11 +6519,20 @@ function sendManagedSystemEmail(context, subject, plainBody, htmlBody) {
     },
   );
   const notificationThread = sentMessage.getThread();
-
-  context.systemLabel.addToThread(notificationThread);
-  context.notificationRetentionLabel.addToThread(notificationThread);
-  notificationThread.moveToInbox();
-  notificationThread.markUnread();
+  Gmail.Users.Threads.modify(
+    {
+      addLabelIds: [
+        context.systemLabel.getId(),
+        context.notificationRetentionLabel.getId(),
+        'INBOX',
+        'UNREAD',
+      ],
+      removeLabelIds: ['SPAM'],
+    },
+    'me',
+    notificationThread.getId(),
+  );
+  invalidateGmailApiCaches_();
 
   verboseLog('SYSTEM EMAIL SENT', {
     subject,
