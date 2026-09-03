@@ -4510,6 +4510,22 @@ function deleteAdminPageSetupTriggers_() {
  * @return {Object} Current setup status for the sidebar.
  */
 function ensureAdminPageSetupQueued_() {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
+    return {
+      status: 'queued',
+      message: 'Advanced Settings setup is already being checked.',
+    };
+  }
+  try {
+    return ensureAdminPageSetupQueuedUnlocked_();
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+/** Performs first-open setup while the caller holds the script lock. */
+function ensureAdminPageSetupQueuedUnlocked_() {
   if (getAdminPageUrl()) {
     return { status: 'ready', message: '' };
   }
