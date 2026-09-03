@@ -27,7 +27,7 @@
     "common": {
       "name": "Retention Manager for Gmail™",
       "useLocaleFromApp": true,
-      "logoUrl": "https://raw.githubusercontent.com/dynamiccookies/retention-manager-for-gmail/refs/heads/release/0.7.0/icons/retention-manager-icon-128.png",
+      "logoUrl": "https://raw.githubusercontent.com/dynamiccookies/Retention-Manager-for-Gmail/main/icons/retention-manager-icon-128.png",
       "openLinkUrlPrefixes": [
         "https://script.google.com/macros/s/",
         "https://github.com/dynamiccookies/retention-manager-for-gmail/"
