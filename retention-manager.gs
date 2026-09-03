@@ -5504,33 +5504,6 @@ function initializeDefaultRetentionLabels() {
 }
 
 /**
- * Optional setup-only entry point. Run this manually when testing installation
- * or permissions. It creates the starter labels when appropriate and logs every
- * retention policy the script can currently recognize without processing mail.
- */
-function setupGmailRetention() {
-  verboseLog('SETUP', 'setupGmailRetention() entered.');
-  const effectiveUserEmail = Session.getEffectiveUser().getEmail();
-  console.log(
-    `Setting up ${RETENTION_CONFIG.APPLICATION_NAME} ` +
-      `${RETENTION_CONFIG.VERSION}` +
-    `${effectiveUserEmail ? ` for ${effectiveUserEmail}` : ''}.`,
-  );
-
-  const initializedLabels = initializeDefaultRetentionLabels();
-  const policies = discoverRetentionLabels(initializedLabels);
-  const policyNames = policies.map(policy => policy.labelName);
-
-  console.log(
-    policyNames.length > 0
-      ? `Recognized retention labels: ${policyNames.join(', ')}`
-      : 'No valid retention labels were recognized after setup.',
-  );
-  verboseLabelSnapshot('SETUP FINAL LABEL SNAPSHOT');
-  verboseLog('SETUP', 'setupGmailRetention() exited.');
-}
-
-/**
  * Diagnostic-only entry point. It performs setup and label discovery but never
  * reads, relabels, or trashes any Gmail conversation. Set VERBOSE_LOGGING to
  * true, save the project, and run this function while troubleshooting.
