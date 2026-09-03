@@ -2238,14 +2238,18 @@
 
         google.script.run
           .withSuccessHandler(data => {
-            applicationData = data.application;
-            initialSettings = clone(data.settings);
-            renderApplication(data);
-            elements.loadingScreen.hidden = true;
-            elements.app.hidden = false;
+            try {
+              applicationData = data.application;
+              initialSettings = clone(data.settings);
+              renderApplication(data);
+              elements.loadingScreen.hidden = true;
+              elements.app.hidden = false;
+            } catch (error) {
+              showFatalError(error);
+            }
           })
           .withFailureHandler(showFatalError)
-          .getAdminRuntimeData();
+          .getAdminPageData();
       }
 
       function applyTheme(theme) {
@@ -4316,7 +4320,7 @@
             }
           })
           .withFailureHandler(() => {})
-          .getAdminPageData();
+          .getAdminRuntimeData();
       }
 
       function focusFirstInvalidField() {
