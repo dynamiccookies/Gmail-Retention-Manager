@@ -630,6 +630,8 @@ const GmailApiApp = Object.freeze({
 /* Cached only for the current Apps Script execution. */
 let retentionSettingsCache = null;
 let verboseLoggingEnabled = false;
+let retentionLabelPatternCache = null;
+let retentionLabelPatternRoot = '';
 
 /** @return {Object} A mutable copy of the immutable factory defaults. */
 function copyFactoryRetentionSettings() {
@@ -996,6 +998,8 @@ function saveRetentionSettings(settings) {
   );
   retentionSettingsCache = freezeRetentionSettings(validatedSettings);
   verboseLoggingEnabled = retentionSettingsCache.VERBOSE_LOGGING;
+  retentionLabelPatternCache = null;
+  retentionLabelPatternRoot = '';
 
   return copyRetentionSettings(retentionSettingsCache);
 }
@@ -4374,10 +4378,15 @@ function applyConfiguredSystemNotificationLabelColor_(label) {
  * @return {RegExp} Case-insensitive retention-label pattern.
  */
 function getRetentionLabelPattern() {
-  return new RegExp(
-    `^${escapeRegExp(getRootLabelName())}/(\\d+)\\s*([a-z]+)$`,
-    'i',
-  );
+  const rootLabel = getRootLabelName();
+  if (!retentionLabelPatternCache || retentionLabelPatternRoot !== rootLabel) {
+    retentionLabelPatternRoot = rootLabel;
+    retentionLabelPatternCache = new RegExp(
+      `^${escapeRegExp(rootLabel)}/(\\d+)\\s*([a-z]+)$`,
+      'i',
+    );
+  }
+  return retentionLabelPatternCache;
 }
 
 /** @return {string} GitHub release URL for the configured semantic version. */
