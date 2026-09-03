@@ -25,7 +25,7 @@
   "addOns": {
     "common": {
       "name": "Retention Manager for Gmail™",
-      "logoUrl": "https://raw.githubusercontent.com/dynamiccookies/Retention-Manager-for-Gmail/a30f3169e228a112bac31ef6a908d178dba588f9/icons/retention-manager-icon-128.png",
+      "logoUrl": "https://raw.githubusercontent.com/dynamiccookies/retention-manager-for-gmail/refs/heads/release/0.7.0/icons/retention-manager-icon-128.png",
       "openLinkUrlPrefixes": [
         "https://script.google.com/macros/s/",
         "https://github.com/dynamiccookies/retention-manager-for-gmail/"
