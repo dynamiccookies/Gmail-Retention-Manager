@@ -427,14 +427,6 @@
         flex-direction: column;
       }
 
-      #notificationEmailSettingsPanel { order: 1; }
-      #filterCleanupPanel { order: 2; }
-      #labelSettingsPanel { order: 3; }
-      #scheduleSettingsPanel { order: 4; }
-      #settingsBackupsPanel { order: 5; }
-      #systemSettingsPanel { order: 6; }
-      #settingsActions { order: 7; }
-
       .form-grid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1602,6 +1594,203 @@
 
       <form id="settingsForm" novalidate></form>
       <div class="settings-panels">
+      <details class="panel collapsible-panel" id="notificationEmailSettingsPanel">
+          <summary class="panel-header">
+            <div>
+              <h2>Email notification settings</h2>
+              <p>Control deletion-summary and update-only notification emails.</p>
+            </div>
+          </summary>
+
+          <div class="panel-body">
+            <div class="form-grid notification-field-grid">
+              <div class="field">
+                <label for="subjectPrefix">Notification email subject prefix</label>
+                <div class="composite-input">
+                  <input id="subjectPrefix" name="subjectPrefix" type="text" autocomplete="off" form="settingsForm">
+                  <span class="composite-suffix" aria-hidden="true">
+                    <span class="composite-example-label">Example</span>
+                    <span class="composite-example-value" id="subjectPrefixExample">[Retention Manager] 3 messages deleted</span>
+                  </span>
+                </div>
+                <p class="help">
+                  Edit only the prefix. It applies to deletion summaries and
+                  update-only notices; the shaded text is example summary data.
+                </p>
+                <p class="field-error" id="subjectPrefixError"></p>
+              </div>
+
+              <div class="field">
+                <label for="notificationRetention">Notification email retention period</label>
+                <input id="notificationRetention" name="notificationRetention" type="text" autocomplete="off" form="settingsForm">
+                <p class="help">
+                  Controls how long generated deletion summaries and update-only
+                  notices remain before becoming eligible to move to Trash.
+                </p>
+                <p class="field-error" id="notificationRetentionError"></p>
+              </div>
+
+            </div>
+          </div>
+        </details>
+
+      <details class="panel collapsible-panel" id="filterCleanupPanel">
+        <summary class="panel-header">
+          <div>
+            <h2>Filter cleanup</h2>
+            <p>Merge simple filters that apply the same retention label.</p>
+          </div>
+          <span class="filter-cleanup-badge" id="filterCleanupBadge" hidden></span>
+        </summary>
+
+        <div class="panel-body">
+          <div class="filter-cleanup-summary">
+            <p class="help" id="filterCleanupSummary"></p>
+            <button
+              class="button button-secondary"
+              id="filterCleanupRefreshButton"
+              type="button"
+            >Refresh suggestions</button>
+          </div>
+          <div
+            class="filter-cleanup-undo"
+            id="filterCleanupUndo"
+            hidden
+          >
+            <p id="filterCleanupUndoText"></p>
+            <button
+              class="button button-secondary"
+              id="filterCleanupUndoButton"
+              type="button"
+            >Undo last merge</button>
+          </div>
+          <p class="filter-cleanup-empty" id="filterCleanupEmpty" hidden>
+            No filter cleanup suggestions are available.
+          </p>
+          <div class="filter-cleanup-list" id="filterCleanupList"></div>
+          <p class="help" style="margin-top:14px;">
+            Only filters with one simple sender, recipient, or subject criterion
+            and no action other than applying one valid retention label are
+            eligible. Complex and unrelated filters are left unchanged.
+          </p>
+        </div>
+      </details>
+
+      <details class="panel collapsible-panel" id="labelSettingsPanel">
+          <summary class="panel-header">
+            <div>
+              <h2>Label settings</h2>
+              <p>Control the labels recognized by the retention process.</p>
+            </div>
+          </summary>
+
+          <div class="panel-body">
+            <div class="form-grid">
+              <div class="field">
+                <label for="rootLabel">Root label</label>
+                <div class="composite-input">
+                  <input id="rootLabel" name="rootLabel" type="text" autocomplete="off" form="settingsForm">
+                  <span class="composite-suffix" aria-hidden="true">
+                    <span class="composite-example-label">Example</span>
+                    <span class="composite-example-value" id="rootLabelExample">Retention/1m</span>
+                  </span>
+                </div>
+                <p class="help">
+                  Edit the root portion. The shaded suffix is only an example;
+                  any supported retention duration can appear there.
+                </p>
+                <p class="field-error" id="rootLabelError"></p>
+
+                <div class="warning-box" id="rootLabelWarning" hidden>
+                  Saving this change renames the existing root label and its
+                  child labels. Gmail filters continue using the same label IDs.
+                </div>
+              </div>
+
+              <div class="field">
+                <label for="starterLabels">Starter retention labels</label>
+                <input id="starterLabels" name="starterLabels" type="text" autocomplete="off" form="settingsForm">
+                <p class="help">
+                  Comma-separated durations, such as 7d, 1m. These are used only
+                  when the root label does not already exist.
+                </p>
+                <p class="field-error" id="starterLabelsError"></p>
+              </div>
+            </div>
+
+            <div class="field" style="margin-top:18px;">
+              <div class="system-label-controls">
+                <div>
+                  <label for="systemLabel">System-notification label</label>
+                  <input id="systemLabel" name="systemLabel" type="text" autocomplete="off" form="settingsForm">
+                </div>
+                <div class="system-label-color-control">
+                  <label for="systemLabelColorButton">Label color</label>
+                  <input id="systemLabelColor" name="systemLabelColor" type="hidden" form="settingsForm">
+                  <button
+                    class="system-label-color-button"
+                    id="systemLabelColorButton"
+                    type="button"
+                    aria-expanded="false"
+                    aria-haspopup="listbox"
+                  >
+                    <span
+                      class="system-label-color-swatch"
+                      id="systemLabelColorSwatch"
+                      aria-hidden="true"
+                    ></span>
+                    <span id="systemLabelColorName">Red</span>
+                  </button>
+                  <div
+                    class="system-label-color-palette"
+                    id="systemLabelColorPalette"
+                    role="listbox"
+                    aria-label="System-notification label color"
+                    hidden
+                  ></div>
+                </div>
+                <button
+                  class="button button-secondary system-label-reset"
+                  id="systemLabelColorReset"
+                  type="button"
+                >Reset color</button>
+              </div>
+              <p class="help">
+                Internal child label used to prevent notification-email loops.
+              </p>
+              <p class="field-error" id="systemLabelError"></p>
+
+              <div class="warning-box" id="systemLabelWarning" hidden>
+                Changing this value may leave the previous internal label in Gmail.
+                <label>
+                  <input id="systemLabelAcknowledgement" type="checkbox">
+                  <span>I understand the old internal label may remain.</span>
+                </label>
+              </div>
+            </div>
+
+            <div class="switch-row archive-setting-row">
+              <div class="switch-copy">
+                <label class="switch-label" for="archiveOnLabel">
+                  Archive retention-labeled messages
+                </label>
+                <p class="help">
+                  Disabled by default. When enabled, the next scan removes only
+                  directly retention-labeled messages from Inbox. Their Trash
+                  deadline does not change, unrelated messages in the same
+                  conversation remain in Inbox, and generated notification
+                  emails are excluded. Turning this off does not return archived
+                  messages.
+                </p>
+              </div>
+              <label class="switch" aria-label="Archive retention-labeled messages">
+                <input id="archiveOnLabel" type="checkbox" form="settingsForm">
+                <span class="switch-track"></span>
+              </label>
+            </div>
+          </div>
+        </details>
+
       <details class="panel collapsible-panel" id="scheduleSettingsPanel">
         <summary class="panel-header">
           <div>
@@ -1722,245 +1911,6 @@
         </form>
       </details>
 
-        <details class="panel collapsible-panel" id="labelSettingsPanel">
-          <summary class="panel-header">
-            <div>
-              <h2>Label settings</h2>
-              <p>Control the labels recognized by the retention process.</p>
-            </div>
-          </summary>
-
-          <div class="panel-body">
-            <div class="form-grid">
-              <div class="field">
-                <label for="rootLabel">Root label</label>
-                <div class="composite-input">
-                  <input id="rootLabel" name="rootLabel" type="text" autocomplete="off" form="settingsForm">
-                  <span class="composite-suffix" aria-hidden="true">
-                    <span class="composite-example-label">Example</span>
-                    <span class="composite-example-value" id="rootLabelExample">Retention/1m</span>
-                  </span>
-                </div>
-                <p class="help">
-                  Edit the root portion. The shaded suffix is only an example;
-                  any supported retention duration can appear there.
-                </p>
-                <p class="field-error" id="rootLabelError"></p>
-
-                <div class="warning-box" id="rootLabelWarning" hidden>
-                  Saving this change renames the existing root label and its
-                  child labels. Gmail filters continue using the same label IDs.
-                </div>
-              </div>
-
-              <div class="field">
-                <label for="starterLabels">Starter retention labels</label>
-                <input id="starterLabels" name="starterLabels" type="text" autocomplete="off" form="settingsForm">
-                <p class="help">
-                  Comma-separated durations, such as 7d, 1m. These are used only
-                  when the root label does not already exist.
-                </p>
-                <p class="field-error" id="starterLabelsError"></p>
-              </div>
-            </div>
-
-            <div class="field" style="margin-top:18px;">
-              <div class="system-label-controls">
-                <div>
-                  <label for="systemLabel">System-notification label</label>
-                  <input id="systemLabel" name="systemLabel" type="text" autocomplete="off" form="settingsForm">
-                </div>
-                <div class="system-label-color-control">
-                  <label for="systemLabelColorButton">Label color</label>
-                  <input id="systemLabelColor" name="systemLabelColor" type="hidden" form="settingsForm">
-                  <button
-                    class="system-label-color-button"
-                    id="systemLabelColorButton"
-                    type="button"
-                    aria-expanded="false"
-                    aria-haspopup="listbox"
-                  >
-                    <span
-                      class="system-label-color-swatch"
-                      id="systemLabelColorSwatch"
-                      aria-hidden="true"
-                    ></span>
-                    <span id="systemLabelColorName">Red</span>
-                  </button>
-                  <div
-                    class="system-label-color-palette"
-                    id="systemLabelColorPalette"
-                    role="listbox"
-                    aria-label="System-notification label color"
-                    hidden
-                  ></div>
-                </div>
-                <button
-                  class="button button-secondary system-label-reset"
-                  id="systemLabelColorReset"
-                  type="button"
-                >Reset color</button>
-              </div>
-              <p class="help">
-                Internal child label used to prevent notification-email loops.
-              </p>
-              <p class="field-error" id="systemLabelError"></p>
-
-              <div class="warning-box" id="systemLabelWarning" hidden>
-                Changing this value may leave the previous internal label in Gmail.
-                <label>
-                  <input id="systemLabelAcknowledgement" type="checkbox">
-                  <span>I understand the old internal label may remain.</span>
-                </label>
-              </div>
-            </div>
-
-            <div class="switch-row archive-setting-row">
-              <div class="switch-copy">
-                <label class="switch-label" for="archiveOnLabel">
-                  Archive retention-labeled messages
-                </label>
-                <p class="help">
-                  Disabled by default. When enabled, the next scan removes only
-                  directly retention-labeled messages from Inbox. Their Trash
-                  deadline does not change, unrelated messages in the same
-                  conversation remain in Inbox, and generated notification
-                  emails are excluded. Turning this off does not return archived
-                  messages.
-                </p>
-              </div>
-              <label class="switch" aria-label="Archive retention-labeled messages">
-                <input id="archiveOnLabel" type="checkbox" form="settingsForm">
-                <span class="switch-track"></span>
-              </label>
-            </div>
-          </div>
-        </details>
-
-        <details class="panel collapsible-panel" id="notificationEmailSettingsPanel">
-          <summary class="panel-header">
-            <div>
-              <h2>Email notification settings</h2>
-              <p>Control deletion-summary and update-only notification emails.</p>
-            </div>
-          </summary>
-
-          <div class="panel-body">
-            <div class="form-grid notification-field-grid">
-              <div class="field">
-                <label for="subjectPrefix">Notification email subject prefix</label>
-                <div class="composite-input">
-                  <input id="subjectPrefix" name="subjectPrefix" type="text" autocomplete="off" form="settingsForm">
-                  <span class="composite-suffix" aria-hidden="true">
-                    <span class="composite-example-label">Example</span>
-                    <span class="composite-example-value" id="subjectPrefixExample">[Retention Manager] 3 messages deleted</span>
-                  </span>
-                </div>
-                <p class="help">
-                  Edit only the prefix. It applies to deletion summaries and
-                  update-only notices; the shaded text is example summary data.
-                </p>
-                <p class="field-error" id="subjectPrefixError"></p>
-              </div>
-
-              <div class="field">
-                <label for="notificationRetention">Notification email retention period</label>
-                <input id="notificationRetention" name="notificationRetention" type="text" autocomplete="off" form="settingsForm">
-                <p class="help">
-                  Controls how long generated deletion summaries and update-only
-                  notices remain before becoming eligible to move to Trash.
-                </p>
-                <p class="field-error" id="notificationRetentionError"></p>
-              </div>
-
-            </div>
-          </div>
-        </details>
-
-        <details class="panel collapsible-panel" id="systemSettingsPanel">
-          <summary class="panel-header">
-            <div>
-              <h2>System settings</h2>
-              <p>Diagnostic and internal options.</p>
-            </div>
-          </summary>
-
-          <div class="panel-body">
-            <div class="switch-row">
-              <div class="switch-copy">
-                <label class="switch-label" for="checkForUpdates">Check for updates</label>
-                <p class="help">
-                  Check the latest published GitHub release during every scan
-                  and on the admin page.
-                </p>
-              </div>
-              <label class="switch" aria-label="Check for updates">
-                <input id="checkForUpdates" type="checkbox" form="settingsForm">
-                <span class="switch-track"></span>
-              </label>
-            </div>
-
-            <div class="switch-row">
-              <div class="switch-copy">
-                <label class="switch-label" for="verboseLogging">Verbose logging</label>
-                <p class="help">
-                  Records detailed mailbox-processing decisions for troubleshooting.
-                  This can increase execution time and log volume, and logs may
-                  contain message subjects, label names, thread IDs, and other
-                  mailbox metadata. Do not leave this enabled long-term.
-                </p>
-              </div>
-              <label class="switch" aria-label="Verbose logging">
-                <input id="verboseLogging" type="checkbox" form="settingsForm">
-                <span class="switch-track"></span>
-              </label>
-            </div>
-
-          </div>
-        </details>
-
-      <details class="panel collapsible-panel" id="filterCleanupPanel">
-        <summary class="panel-header">
-          <div>
-            <h2>Filter cleanup</h2>
-            <p>Merge simple filters that apply the same retention label.</p>
-          </div>
-          <span class="filter-cleanup-badge" id="filterCleanupBadge" hidden></span>
-        </summary>
-
-        <div class="panel-body">
-          <div class="filter-cleanup-summary">
-            <p class="help" id="filterCleanupSummary"></p>
-            <button
-              class="button button-secondary"
-              id="filterCleanupRefreshButton"
-              type="button"
-            >Refresh suggestions</button>
-          </div>
-          <div
-            class="filter-cleanup-undo"
-            id="filterCleanupUndo"
-            hidden
-          >
-            <p id="filterCleanupUndoText"></p>
-            <button
-              class="button button-secondary"
-              id="filterCleanupUndoButton"
-              type="button"
-            >Undo last merge</button>
-          </div>
-          <p class="filter-cleanup-empty" id="filterCleanupEmpty" hidden>
-            No filter cleanup suggestions are available.
-          </p>
-          <div class="filter-cleanup-list" id="filterCleanupList"></div>
-          <p class="help" style="margin-top:14px;">
-            Only filters with one simple sender, recipient, or subject criterion
-            and no action other than applying one valid retention label are
-            eligible. Complex and unrelated filters are left unchanged.
-          </p>
-        </div>
-      </details>
-
       <details class="panel collapsible-panel" id="settingsBackupsPanel">
         <summary class="panel-header">
           <div>
@@ -2002,6 +1952,48 @@
           <p class="help backup-retention-note" id="backupRetentionNote"></p>
         </div>
       </details>
+
+      <details class="panel collapsible-panel" id="systemSettingsPanel">
+          <summary class="panel-header">
+            <div>
+              <h2>System settings</h2>
+              <p>Diagnostic and internal options.</p>
+            </div>
+          </summary>
+
+          <div class="panel-body">
+            <div class="switch-row">
+              <div class="switch-copy">
+                <label class="switch-label" for="checkForUpdates">Check for updates</label>
+                <p class="help">
+                  Check the latest published GitHub release during every scan
+                  and on the admin page.
+                </p>
+              </div>
+              <label class="switch" aria-label="Check for updates">
+                <input id="checkForUpdates" type="checkbox" form="settingsForm">
+                <span class="switch-track"></span>
+              </label>
+            </div>
+
+            <div class="switch-row">
+              <div class="switch-copy">
+                <label class="switch-label" for="verboseLogging">Verbose logging</label>
+                <p class="help">
+                  Records detailed mailbox-processing decisions for troubleshooting.
+                  This can increase execution time and log volume, and logs may
+                  contain message subjects, label names, thread IDs, and other
+                  mailbox metadata. Do not leave this enabled long-term.
+                </p>
+              </div>
+              <label class="switch" aria-label="Verbose logging">
+                <input id="verboseLogging" type="checkbox" form="settingsForm">
+                <span class="switch-track"></span>
+              </label>
+            </div>
+
+          </div>
+        </details>
 
       <div class="actions" id="settingsActions">
         <span class="unsaved" id="unsavedText" hidden>Unsaved changes</span>
