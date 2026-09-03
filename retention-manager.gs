@@ -3761,6 +3761,12 @@ function prepareQueuedRetentionRun_(event) {
 /** Queues retention from Gmail and refreshes the card immediately. */
 function runRetentionFromSidebar() {
   assertAdminOwnerAccess();
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
+    return buildSidebarActionResponse_(
+      'Another retention operation is active. Wait for it to finish and try again.',
+    );
+  }
   try {
     const runtime = getRetentionRuntimeState();
     if (isRetentionRunPending_(runtime)) {
@@ -3846,6 +3852,8 @@ function runRetentionFromSidebar() {
     );
   } catch (error) {
     return buildSidebarActionResponse_(getRuntimeErrorMessage(error));
+  } finally {
+    lock.releaseLock();
   }
 }
 
