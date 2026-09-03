@@ -2199,14 +2199,12 @@
         );
         elements.scheduleForm.addEventListener('submit', saveSchedule);
         elements.scheduleForm.addEventListener('input', handleScheduleChange);
-        elements.scheduleForm.addEventListener('change', handleScheduleChange);
         elements.scheduleResetButton.addEventListener('click', resetScheduleForm);
         elements.scheduleRepairButton.addEventListener('click', repairSchedule);
         elements.discardButton.addEventListener('click', discardChanges);
         elements.settingsForm.addEventListener('submit', saveSettings);
         getSettingsPanels().forEach(panel => {
           panel.addEventListener('input', handleFormChange);
-          panel.addEventListener('change', handleFormChange);
         });
         elements.systemLabelColorButton.addEventListener(
           'click',
