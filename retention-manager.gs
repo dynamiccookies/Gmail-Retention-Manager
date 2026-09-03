@@ -89,13 +89,6 @@ const RETENTION_ADMIN_PREFERENCES_PROPERTY_KEY =
   'GMAIL_RETENTION_ADMIN_PREFERENCES';
 const RETENTION_ADMIN_PAGE_URL_PROPERTY_KEY =
   'GMAIL_RETENTION_ADMIN_PAGE_URL';
-const RETENTION_ADMIN_PAGE_URL_CACHE_KEY =
-  'GMAIL_RETENTION_ADMIN_PAGE_URL_CACHE';
-const RETENTION_ADMIN_PAGE_SETUP_PROPERTY_KEY =
-  'GMAIL_RETENTION_ADMIN_PAGE_SETUP';
-const RETENTION_ADMIN_PAGE_SETUP_HANDLER =
-  'registerRetentionAdminPageUrl';
-const RETENTION_ADMIN_PAGE_SETUP_STALE_MS = 10 * 60 * 1000;
 const RETENTION_SIDEBAR_RUN_PROPERTY_KEY =
   'GMAIL_RETENTION_SIDEBAR_RUN_REQUEST';
 const RETENTION_CONTINUATION_PROPERTY_KEY =
@@ -2353,7 +2346,6 @@ function assertAdminOwnerAccess() {
  */
 function doGet() {
   assertAdminOwnerAccess();
-  rememberCurrentAdminPageUrl_();
 
   return HtmlService.createHtmlOutputFromFile('admin')
     .setTitle(RETENTION_CONFIG.APPLICATION_NAME)
@@ -3757,46 +3749,30 @@ function buildRetentionSidebarCard_(overrides = {}) {
         ),
     );
   } else {
-    const adminPageSetup = ensureAdminPageSetupQueued_();
+    actionsSection.addWidget(
+      CardService.newTextParagraph().setText(
+        'Paste the Web app URL shown when you deployed this project. ' +
+          'The URL must end in <b>/exec</b>.',
+      ),
+    );
+    actionsSection.addWidget(
+      CardService.newTextInput()
+        .setFieldName('adminPageUrl')
+        .setTitle('Web App URL')
+        .setValue(typeof overrides.adminPageUrl === 'string'
+          ? overrides.adminPageUrl
+          : ''),
+    );
     actionsSection.addWidget(
       CardService.newTextButton()
-        .setText(adminPageSetup.status === 'error'
-          ? 'Advanced Settings Unavailable'
-          : 'Advanced Settings — Setting Up…')
-        .setDisabled(true),
+        .setText('Save Web App URL')
+        .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
+        .setOnClickAction(
+          CardService.newAction()
+            .setFunctionName('saveRetentionAdminPageUrl')
+            .setLoadIndicator(CardService.LoadIndicator.SPINNER),
+        ),
     );
-    if (adminPageSetup.status === 'error') {
-      actionsSection.addWidget(
-        CardService.newTextParagraph().setText(
-          `<font color="#c5221f">${escapeHtml(adminPageSetup.message)}</font>`,
-        ),
-      );
-      actionsSection.addWidget(
-        CardService.newTextButton()
-          .setText('Retry Setup')
-          .setOnClickAction(
-            CardService.newAction()
-              .setFunctionName('retryRetentionAdminPageSetup')
-              .setLoadIndicator(CardService.LoadIndicator.SPINNER),
-          ),
-      );
-    } else {
-      actionsSection.addWidget(
-        CardService.newTextParagraph().setText(
-          '<font color="#1a73e8">Finishing one-time setup in the ' +
-            'background.</font>',
-        ),
-      );
-      actionsSection.addWidget(
-        CardService.newTextButton()
-          .setText('Refresh')
-          .setOnClickAction(
-            CardService.newAction()
-              .setFunctionName('refreshRetentionSidebarStatus')
-              .setLoadIndicator(CardService.LoadIndicator.SPINNER),
-          ),
-      );
-    }
   }
   card.addSection(actionsSection);
 
@@ -4824,20 +4800,6 @@ function getProjectReleaseUrl() {
  * @return {string} Deployed web-app URL, or an empty string when unavailable.
  */
 function getAdminPageUrl() {
-  try {
-    const cachedUrl = normalizeAdminPageUrl_(
-      CacheService.getScriptCache().get(RETENTION_ADMIN_PAGE_URL_CACHE_KEY),
-    );
-    if (cachedUrl) {
-      return cachedUrl;
-    }
-  } catch (error) {
-    verboseLog(
-      'ADMIN PAGE URL CACHE READ FAILURE',
-      () => (error && error.stack ? error.stack : String(error)),
-    );
-  }
-
   const storedUrl = PropertiesService.getScriptProperties().getProperty(
     RETENTION_ADMIN_PAGE_URL_PROPERTY_KEY,
   );
@@ -4849,7 +4811,7 @@ function getAdminPageUrl() {
  * discovery is intentionally avoided because an add-on execution can resolve
  * ScriptApp.getService().getUrl() to a library or add-on URL instead.
  *
- * @param {*} value Candidate URL from Script Properties.
+ * @param {*} value Candidate URL.
  * @return {string} Validated web-app URL, or an empty string.
  */
 function normalizeAdminPageUrl_(value) {
@@ -4861,243 +4823,29 @@ function normalizeAdminPageUrl_(value) {
     : '';
 }
 
-/** Stores one validated URL in persistent and short-term caches. */
-function storeAdminPageUrl_(value) {
-  const url = normalizeAdminPageUrl_(value);
-  if (!url) {
-    return '';
+/** Saves a manually supplied production web-app URL from the Gmail sidebar. */
+function saveRetentionAdminPageUrl(event) {
+  assertAdminOwnerAccess();
+  const submittedUrl = getSidebarFormString_(event, 'adminPageUrl', '');
+  const adminPageUrl = normalizeAdminPageUrl_(submittedUrl);
+  if (!adminPageUrl) {
+    const response = CardService.newActionResponseBuilder().setNavigation(
+      CardService.newNavigation().updateCard(
+        buildRetentionSidebarCard_({ adminPageUrl: submittedUrl }),
+      ),
+    );
+    response.setNotification(
+      CardService.newNotification().setText(
+        'Enter the deployed Web app URL ending in /exec.',
+      ),
+    );
+    return response.build();
   }
   PropertiesService.getScriptProperties().setProperty(
     RETENTION_ADMIN_PAGE_URL_PROPERTY_KEY,
-    url,
+    adminPageUrl,
   );
-  try {
-    CacheService.getScriptCache().put(
-      RETENTION_ADMIN_PAGE_URL_CACHE_KEY,
-      url,
-      21600,
-    );
-  } catch (error) {
-    verboseLog(
-      'ADMIN PAGE URL CACHE WRITE FAILURE',
-      () => (error && error.stack ? error.stack : String(error)),
-    );
-  }
-  return url;
-}
-
-/** @return {?Object} Valid one-time admin-page setup state. */
-function getAdminPageSetupState_() {
-  const stored = PropertiesService.getScriptProperties().getProperty(
-    RETENTION_ADMIN_PAGE_SETUP_PROPERTY_KEY,
-  );
-  if (!stored) {
-    return null;
-  }
-  try {
-    const state = JSON.parse(stored);
-    if (
-      !isConfigurationObject(state) ||
-      !['queued', 'error'].includes(state.status) ||
-      typeof state.updatedAt !== 'string' ||
-      Number.isNaN(new Date(state.updatedAt).getTime())
-    ) {
-      throw new Error('invalid setup state');
-    }
-    return {
-      status: state.status,
-      triggerId: typeof state.triggerId === 'string' ? state.triggerId : '',
-      updatedAt: state.updatedAt,
-      message: typeof state.message === 'string' ? state.message : '',
-    };
-  } catch (error) {
-    PropertiesService.getScriptProperties().deleteProperty(
-      RETENTION_ADMIN_PAGE_SETUP_PROPERTY_KEY,
-    );
-    return null;
-  }
-}
-
-/** Saves one serializable admin-page setup state. */
-function saveAdminPageSetupState_(state) {
-  PropertiesService.getScriptProperties().setProperty(
-    RETENTION_ADMIN_PAGE_SETUP_PROPERTY_KEY,
-    JSON.stringify(state),
-  );
-  return state;
-}
-
-/** Returns every outstanding one-time admin-page registration trigger. */
-function getAdminPageSetupTriggers_() {
-  return ScriptApp.getProjectTriggers().filter(trigger =>
-    trigger.getHandlerFunction() === RETENTION_ADMIN_PAGE_SETUP_HANDLER,
-  );
-}
-
-/** Deletes outstanding setup triggers without allowing cleanup to fail. */
-function deleteAdminPageSetupTriggers_() {
-  getAdminPageSetupTriggers_().forEach(trigger => {
-    try {
-      ScriptApp.deleteTrigger(trigger);
-    } catch (error) {
-      verboseLog(
-        'ADMIN PAGE SETUP TRIGGER DELETE FAILURE',
-        () => (error && error.stack ? error.stack : String(error)),
-      );
-    }
-  });
-}
-
-/**
- * Ensures first-open setup has one background execution queued. A card action
- * cannot reliably obtain the web-app URL because it runs under the add-on head
- * deployment; a time-driven execution resolves the deployed web app instead.
- *
- * @return {Object} Current setup status for the sidebar.
- */
-function ensureAdminPageSetupQueued_() {
-  const lock = LockService.getScriptLock();
-  if (!lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
-    return {
-      status: 'queued',
-      message: 'Advanced Settings setup is already being checked.',
-    };
-  }
-  try {
-    return ensureAdminPageSetupQueuedUnlocked_();
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-/** Performs first-open setup while the caller holds the script lock. */
-function ensureAdminPageSetupQueuedUnlocked_() {
-  if (getAdminPageUrl()) {
-    return { status: 'ready', message: '' };
-  }
-
-  let state = getAdminPageSetupState_();
-  const setupTriggers = getAdminPageSetupTriggers_();
-  if (state && state.status === 'error') {
-    return state;
-  }
-
-  if (state && state.status === 'queued') {
-    const queuedAt = new Date(state.updatedAt);
-    if (Date.now() - queuedAt.getTime() < RETENTION_ADMIN_PAGE_SETUP_STALE_MS) {
-      if (setupTriggers.length > 0) {
-        setupTriggers.slice(1).forEach(trigger => ScriptApp.deleteTrigger(trigger));
-        return state;
-      }
-    }
-    deleteAdminPageSetupTriggers_();
-    state = saveAdminPageSetupState_({
-      status: 'error',
-      triggerId: '',
-      updatedAt: new Date().toISOString(),
-      message: 'Advanced Settings setup did not finish. Confirm that the ' +
-        'project has a non-test web app deployment, then retry setup.',
-    });
-    return state;
-  }
-
-  if (setupTriggers.length > 0) {
-    setupTriggers.slice(1).forEach(trigger => ScriptApp.deleteTrigger(trigger));
-    return saveAdminPageSetupState_({
-      status: 'queued',
-      triggerId: setupTriggers[0].getUniqueId(),
-      updatedAt: new Date().toISOString(),
-      message: '',
-    });
-  }
-
-  try {
-    const trigger = ScriptApp.newTrigger(RETENTION_ADMIN_PAGE_SETUP_HANDLER)
-      .timeBased()
-      .after(1000)
-      .create();
-    return saveAdminPageSetupState_({
-      status: 'queued',
-      triggerId: trigger.getUniqueId(),
-      updatedAt: new Date().toISOString(),
-      message: '',
-    });
-  } catch (error) {
-    return saveAdminPageSetupState_({
-      status: 'error',
-      triggerId: '',
-      updatedAt: new Date().toISOString(),
-      message: 'Unable to start Advanced Settings setup. ' +
-        getRuntimeErrorMessage(error),
-    });
-  }
-}
-
-/**
- * One-time background handler that captures the deployed web-app URL and then
- * removes every copy of its temporary setup trigger.
- */
-function registerRetentionAdminPageUrl() {
-  try {
-    const adminPageUrl = rememberCurrentAdminPageUrl_();
-    if (!adminPageUrl) {
-      throw new Error(
-        'No deployed web app URL was available. Confirm that a non-test web ' +
-          'app deployment exists.',
-      );
-    }
-    PropertiesService.getScriptProperties().deleteProperty(
-      RETENTION_ADMIN_PAGE_SETUP_PROPERTY_KEY,
-    );
-  } catch (error) {
-    saveAdminPageSetupState_({
-      status: 'error',
-      triggerId: '',
-      updatedAt: new Date().toISOString(),
-      message: getRuntimeErrorMessage(error),
-    });
-  } finally {
-    deleteAdminPageSetupTriggers_();
-  }
-}
-
-/** Clears a failed setup and immediately queues a fresh one from the card. */
-function retryRetentionAdminPageSetup() {
-  assertAdminOwnerAccess();
-  deleteAdminPageSetupTriggers_();
-  PropertiesService.getScriptProperties().deleteProperty(
-    RETENTION_ADMIN_PAGE_SETUP_PROPERTY_KEY,
-  );
-  const state = ensureAdminPageSetupQueued_();
-  const message = state.status === 'error'
-    ? state.message
-    : 'Advanced Settings setup restarted. Refresh again in a few moments.';
-  return buildSidebarActionResponse_(message);
-}
-
-/**
- * Captures the web-app URL only from non-card execution contexts. This helper
- * is called by doGet() and retention runs, where getService().getUrl() resolves
- * the deployed web app. Gmail card rendering deliberately never calls it.
- *
- * @return {string} Validated and stored web-app URL, or an empty string.
- */
-function rememberCurrentAdminPageUrl_() {
-  try {
-    const currentUrl = normalizeAdminPageUrl_(
-      ScriptApp.getService().getUrl() || '',
-    );
-    if (!currentUrl) {
-      return '';
-    }
-    return storeAdminPageUrl_(currentUrl);
-  } catch (error) {
-    verboseLog(
-      'ADMIN PAGE URL REGISTRATION FAILURE',
-      () => (error && error.stack ? error.stack : String(error)),
-    );
-    return '';
-  }
+  return buildSidebarActionResponse_('Advanced Settings URL saved.');
 }
 
 /**
@@ -5919,7 +5667,6 @@ function enforceGmailRetention(event, requestedRunId) {
       runId = queuedSidebarRun.runId;
     }
     runSource = queuedSidebarRun ? 'manual' : runSource;
-    rememberCurrentAdminPageUrl_();
     const startedState = {
       lastRunSource: runSource,
       lastRunStatus: 'running',
