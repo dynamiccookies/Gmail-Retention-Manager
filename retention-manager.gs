@@ -234,10 +234,6 @@ const RETENTION_CONFIG = Object.freeze({
 
   // Gmail Apps Script methods are safest when processed in moderate batches.
   THREAD_PAGE_SIZE: 100,
-  // Active messages are moved individually so mixed Inbox/Trash conversations
-  // do not lose their remaining active messages during retention enforcement.
-  TRASH_BATCH_SIZE: 100,
-
   // Large deletion runs are split into multiple complete summary messages.
   MAX_ROWS_PER_NOTIFICATION: 200,
 
@@ -6345,8 +6341,8 @@ function archiveRetentionLabeledInboxMessages(
 }
 
 /**
- * Moves pending active messages to Trash in moderate batches. Messages are
- * moved individually because a conversation may contain both trashed and active
+ * Moves pending active messages to Trash. Messages are moved individually
+ * because a conversation may contain both trashed and active
  * messages. Report records are added only after the corresponding move succeeds.
  *
  * @param {Array} pendingDeletions Threads, active messages, and report data.
@@ -6379,47 +6375,26 @@ function movePendingMessagesToTrash(pendingDeletions) {
   const systemNotificationThreads = new Map();
   let movedMessageCount = 0;
 
-  for (
-    let index = 0;
-    index < pendingMessages.length;
-    index += RETENTION_CONFIG.TRASH_BATCH_SIZE
-  ) {
-    const batch = pendingMessages.slice(
-      index,
-      index + RETENTION_CONFIG.TRASH_BATCH_SIZE,
-    );
-
-    verboseLog('TRASH BATCH', {
-      batchStartIndex: index,
-      batchSize: batch.length,
-      messageIds: batch.map(item => item.message.getId()),
-      threadIds: [...new Set(batch.map(item => item.thread.getId()))],
-    });
-
-    for (const item of batch) {
-      // Recheck immediately before the move in case the user manually trashed
-      // the message after collection but before this batch was processed.
-      if (item.message.isInTrash()) {
-        verboseLog('TRASH MESSAGE SKIP', {
-          messageId: item.message.getId(),
-          threadId: item.thread.getId(),
-          reason: 'Message is already in Trash',
-        });
-        continue;
-      }
-
-      item.message.moveToTrash();
-      movedMessageCount += 1;
-      movedThreadIds.add(item.thread.getId());
-
-      if (item.isSystemNotification) {
-        systemNotificationThreads.set(item.thread.getId(), item.thread);
-      } else if (item.messageRecord) {
-        deletedMessageRecords.push(item.messageRecord);
-      }
+  for (const item of pendingMessages) {
+    // Recheck in case the user manually trashed the message after collection.
+    if (item.message.isInTrash()) {
+      verboseLog('TRASH MESSAGE SKIP', () => ({
+        messageId: item.message.getId(),
+        threadId: item.thread.getId(),
+        reason: 'Message is already in Trash',
+      }));
+      continue;
     }
 
-    verboseLog('TRASH BATCH', 'Individual message moves completed.');
+    item.message.moveToTrash();
+    movedMessageCount += 1;
+    movedThreadIds.add(item.thread.getId());
+
+    if (item.isSystemNotification) {
+      systemNotificationThreads.set(item.thread.getId(), item.thread);
+    } else if (item.messageRecord) {
+      deletedMessageRecords.push(item.messageRecord);
+    }
   }
 
   for (const thread of systemNotificationThreads.values()) {
