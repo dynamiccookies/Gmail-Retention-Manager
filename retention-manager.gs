@@ -626,6 +626,7 @@ const GmailApiApp = Object.freeze({
 
 /* Cached only for the current Apps Script execution. */
 let retentionSettingsCache = null;
+let verboseLoggingEnabled = false;
 
 /** @return {Object} A mutable copy of the immutable factory defaults. */
 function copyFactoryRetentionSettings() {
@@ -991,6 +992,7 @@ function saveRetentionSettings(settings) {
     JSON.stringify(storedConfiguration),
   );
   retentionSettingsCache = freezeRetentionSettings(validatedSettings);
+  verboseLoggingEnabled = retentionSettingsCache.VERBOSE_LOGGING;
 
   return copyRetentionSettings(retentionSettingsCache);
 }
@@ -1184,6 +1186,7 @@ function getRetentionSettings() {
       migration.configuration.settings,
     );
     retentionSettingsCache = freezeRetentionSettings(validatedSettings);
+    verboseLoggingEnabled = retentionSettingsCache.VERBOSE_LOGGING;
 
     if (migration.migrated) {
       createRetentionSettingsBackupFromConfiguration(
@@ -5189,7 +5192,7 @@ function executeGmailRetention_() {
     const effectiveUserEmail = Session.getEffectiveUser().getEmail();
     const activeUserEmail = Session.getActiveUser().getEmail();
 
-    verboseLog('SESSION', {
+    verboseLog('SESSION', () => ({
       effectiveUserEmail,
       activeUserEmail,
       scriptTimeZone: Session.getScriptTimeZone(),
@@ -5203,7 +5206,7 @@ function executeGmailRetention_() {
           getSystemNotificationLabelName(),
         archiveOnLabel: settings.ARCHIVE_ON_LABEL,
       },
-    });
+    }));
 
     console.log(
       `Starting ${RETENTION_CONFIG.APPLICATION_NAME} ` +
@@ -5285,11 +5288,11 @@ function executeGmailRetention_() {
       const threadLabels = thread.getLabels();
       const threadIsInTrash = thread.isInTrash();
       const messages = thread.getMessages();
-      verboseLog('THREAD LABELS', {
+      verboseLog('THREAD LABELS', () => ({
         threadId: thread.getId(),
         labels: threadLabels.map(label => label.getName()),
         isInTrash: threadIsInTrash,
-      });
+      }));
       const isSystemNotification = threadLabels.some(
         label => labelNamesEqual(label.getName(), getSystemNotificationLabelName()),
       );
@@ -5300,13 +5303,13 @@ function executeGmailRetention_() {
           excludedArchiveMessageIds.add(message.getId());
         });
       }
-      verboseLog('THREAD MESSAGES', {
+      verboseLog('THREAD MESSAGES', () => ({
         threadId: thread.getId(),
         messageCount: messages.length,
         activeMessageCount: activeMessages.length,
         trashedMessageCount: messages.length - activeMessages.length,
         subjects: messages.map(message => message.getSubject() || '(no subject)'),
-      });
+      }));
 
       /*
        * A user may manually trash a generated summary before its configured
@@ -5316,14 +5319,14 @@ function executeGmailRetention_() {
        * can report a mixed Inbox/Trash conversation itself as being in Trash.
        */
       if (activeMessages.length === 0) {
-        verboseLog('THREAD TRASH STATE', {
+        verboseLog('THREAD TRASH STATE', () => ({
           threadId: thread.getId(),
           threadIsInTrash,
           isSystemNotification,
           action: isSystemNotification
             ? 'Remove temporary notification labels and skip'
             : 'Skip conversation with no active messages',
-        });
+        }));
         if (isSystemNotification) {
           removeSystemNotificationLabels(thread);
         }
@@ -5331,33 +5334,33 @@ function executeGmailRetention_() {
       }
 
       if (threadIsInTrash) {
-        verboseLog('THREAD TRASH STATE', {
+        verboseLog('THREAD TRASH STATE', () => ({
           threadId: thread.getId(),
           threadIsInTrash,
           activeMessageCount: activeMessages.length,
           action: 'Process active messages in mixed-state conversation',
-        });
+        }));
       }
 
       const newestMessage = getNewestMessage(messages);
-      verboseLog('THREAD NEWEST MESSAGE', {
+      verboseLog('THREAD NEWEST MESSAGE', () => ({
         threadId: thread.getId(),
         subject: newestMessage.getSubject() || '(no subject)',
         date: newestMessage.getDate().toISOString(),
-      });
+      }));
 
       let policies = threadLabels
         .map(label => parseRetentionLabel(label))
         .filter(policy => policy !== null);
 
-      verboseLog('THREAD POLICIES', {
+      verboseLog('THREAD POLICIES', () => ({
         threadId: thread.getId(),
         policies: policies.map(policy => ({
           labelName: policy.labelName,
           amount: policy.amount,
           unit: policy.unit,
         })),
-      });
+      }));
 
       /*
        * System notifications always use the configured notification-retention
@@ -5380,12 +5383,12 @@ function executeGmailRetention_() {
         isSystemNotification,
       );
 
-      verboseLog('WINNING POLICY', {
+      verboseLog('WINNING POLICY', () => ({
         threadId: thread.getId(),
         labelName: winningPolicy.labelName,
         expiresAt: winningPolicy.expiresAt.toISOString(),
         now: now.toISOString(),
-      });
+      }));
 
       // Keep exactly one valid retention label to eliminate conflicting UI state.
       for (const policy of policies) {
@@ -7177,21 +7180,26 @@ function chunkArray(items, size) {
  * complete values instead of only "[object Object]".
  *
  * @param {string} step Short diagnostic step name.
- * @param {*} details Message or structured diagnostic details.
+ * @param {*|Function} details Message, structured details, or lazy factory.
  */
 function verboseLog(step, details) {
-  if (!getRetentionSettings().VERBOSE_LOGGING) {
+  if (!retentionSettingsCache) {
+    getRetentionSettings();
+  }
+  if (!verboseLoggingEnabled) {
     return;
   }
 
+  const resolvedDetails = typeof details === 'function' ? details() : details;
+
   let renderedDetails;
-  if (typeof details === 'string') {
-    renderedDetails = details;
+  if (typeof resolvedDetails === 'string') {
+    renderedDetails = resolvedDetails;
   } else {
     try {
-      renderedDetails = JSON.stringify(details, null, 2);
+      renderedDetails = JSON.stringify(resolvedDetails, null, 2);
     } catch (error) {
-      renderedDetails = String(details);
+      renderedDetails = String(resolvedDetails);
     }
   }
 
@@ -7206,7 +7214,10 @@ function verboseLog(step, details) {
  * @param {string} step Snapshot label used in the execution log.
  */
 function verboseLabelSnapshot(step) {
-  if (!getRetentionSettings().VERBOSE_LOGGING) {
+  if (!retentionSettingsCache) {
+    getRetentionSettings();
+  }
+  if (!verboseLoggingEnabled) {
     return;
   }
 
