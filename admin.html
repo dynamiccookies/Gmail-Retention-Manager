@@ -1592,7 +1592,6 @@
         </article>
       </section>
 
-      <form id="settingsForm" novalidate></form>
       <div class="settings-panels">
       <details class="panel collapsible-panel" id="notificationEmailSettingsPanel">
           <summary class="panel-header">
@@ -1602,12 +1601,12 @@
             </div>
           </summary>
 
-          <div class="panel-body">
+          <form class="panel-body settings-form" novalidate>
             <div class="form-grid notification-field-grid">
               <div class="field">
                 <label for="subjectPrefix">Notification email subject prefix</label>
                 <div class="composite-input">
-                  <input id="subjectPrefix" name="subjectPrefix" type="text" autocomplete="off" form="settingsForm">
+                  <input id="subjectPrefix" name="subjectPrefix" type="text" autocomplete="off">
                   <span class="composite-suffix" aria-hidden="true">
                     <span class="composite-example-label">Example</span>
                     <span class="composite-example-value" id="subjectPrefixExample">[Retention Manager] 3 messages deleted</span>
@@ -1622,7 +1621,7 @@
 
               <div class="field">
                 <label for="notificationRetention">Notification email retention period</label>
-                <input id="notificationRetention" name="notificationRetention" type="text" autocomplete="off" form="settingsForm">
+                <input id="notificationRetention" name="notificationRetention" type="text" autocomplete="off">
                 <p class="help">
                   Controls how long generated deletion summaries and update-only
                   notices remain before becoming eligible to move to Trash.
@@ -1631,7 +1630,7 @@
               </div>
 
             </div>
-          </div>
+          </form>
         </details>
 
       <details class="panel collapsible-panel" id="filterCleanupPanel">
@@ -1684,12 +1683,12 @@
             </div>
           </summary>
 
-          <div class="panel-body">
+          <form class="panel-body settings-form" novalidate>
             <div class="form-grid">
               <div class="field">
                 <label for="rootLabel">Root label</label>
                 <div class="composite-input">
-                  <input id="rootLabel" name="rootLabel" type="text" autocomplete="off" form="settingsForm">
+                  <input id="rootLabel" name="rootLabel" type="text" autocomplete="off">
                   <span class="composite-suffix" aria-hidden="true">
                     <span class="composite-example-label">Example</span>
                     <span class="composite-example-value" id="rootLabelExample">Retention/1m</span>
@@ -1709,7 +1708,7 @@
 
               <div class="field">
                 <label for="starterLabels">Starter retention labels</label>
-                <input id="starterLabels" name="starterLabels" type="text" autocomplete="off" form="settingsForm">
+                <input id="starterLabels" name="starterLabels" type="text" autocomplete="off">
                 <p class="help">
                   Comma-separated durations, such as 7d, 1m. These are used only
                   when the root label does not already exist.
@@ -1722,11 +1721,11 @@
               <div class="system-label-controls">
                 <div>
                   <label for="systemLabel">System-notification label</label>
-                  <input id="systemLabel" name="systemLabel" type="text" autocomplete="off" form="settingsForm">
+                  <input id="systemLabel" name="systemLabel" type="text" autocomplete="off">
                 </div>
                 <div class="system-label-color-control">
                   <label for="systemLabelColorButton">Label color</label>
-                  <input id="systemLabelColor" name="systemLabelColor" type="hidden" form="settingsForm">
+                  <input id="systemLabelColor" name="systemLabelColor" type="hidden">
                   <button
                     class="system-label-color-button"
                     id="systemLabelColorButton"
@@ -1784,11 +1783,11 @@
                 </p>
               </div>
               <label class="switch" aria-label="Archive retention-labeled messages">
-                <input id="archiveOnLabel" type="checkbox" form="settingsForm">
+                <input id="archiveOnLabel" type="checkbox">
                 <span class="switch-track"></span>
               </label>
             </div>
-          </div>
+          </form>
         </details>
 
       <details class="panel collapsible-panel" id="scheduleSettingsPanel">
@@ -1961,7 +1960,7 @@
             </div>
           </summary>
 
-          <div class="panel-body">
+          <form class="panel-body settings-form" novalidate>
             <div class="switch-row">
               <div class="switch-copy">
                 <label class="switch-label" for="checkForUpdates">Check for updates</label>
@@ -1971,7 +1970,7 @@
                 </p>
               </div>
               <label class="switch" aria-label="Check for updates">
-                <input id="checkForUpdates" type="checkbox" form="settingsForm">
+                <input id="checkForUpdates" type="checkbox">
                 <span class="switch-track"></span>
               </label>
             </div>
@@ -1987,12 +1986,12 @@
                 </p>
               </div>
               <label class="switch" aria-label="Verbose logging">
-                <input id="verboseLogging" type="checkbox" form="settingsForm">
+                <input id="verboseLogging" type="checkbox">
                 <span class="switch-track"></span>
               </label>
             </div>
 
-          </div>
+          </form>
         </details>
 
       <div class="actions" id="settingsActions">
@@ -2003,8 +2002,7 @@
         <button
           class="button button-primary"
           id="saveButton"
-          type="submit"
-          form="settingsForm"
+          type="button"
           disabled
         >
           Save changes
@@ -2089,7 +2087,7 @@
           'scheduleReplaceAcknowledgement', 'scheduleUnsavedText',
           'scheduleResetButton', 'scheduleRepairButton', 'scheduleSaveButton',
           'lastSuccessValue', 'lastSuccessDetail', 'lastErrorValue',
-          'lastErrorDetail', 'runButton', 'runHelp', 'settingsForm',
+          'lastErrorDetail', 'runButton', 'runHelp',
           'notificationEmailSettingsPanel', 'labelSettingsPanel',
           'systemSettingsPanel', 'settingsActions',
           'rootLabel', 'rootLabelExample', 'rootLabelError', 'rootLabelWarning',
@@ -2187,7 +2185,10 @@
         elements.scheduleResetButton.addEventListener('click', resetScheduleForm);
         elements.scheduleRepairButton.addEventListener('click', repairSchedule);
         elements.discardButton.addEventListener('click', discardChanges);
-        elements.settingsForm.addEventListener('submit', saveSettings);
+        document.querySelectorAll('.settings-form').forEach(form => {
+          form.addEventListener('submit', saveSettings);
+        });
+        elements.saveButton.addEventListener('click', saveSettings);
         getSettingsPanels().forEach(panel => {
           panel.addEventListener('input', handleFormChange);
         });
@@ -4349,7 +4350,7 @@
 
       function focusFirstInvalidField() {
         const invalid = document.querySelector(
-          '[form="settingsForm"][aria-invalid="true"]',
+          '.settings-form [aria-invalid="true"]',
         );
         if (invalid) {
           const containingPanel = invalid.closest('details');
