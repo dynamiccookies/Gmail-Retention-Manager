@@ -336,6 +336,10 @@
         font-size: 13px;
       }
 
+      #lastSuccessDetail {
+        white-space: pre-line;
+      }
+
       .status-card-action {
         margin-top: 14px;
       }
@@ -3809,20 +3813,22 @@
           Number(result.archiveLookupFailureCount || 0) +
           Number(result.archiveFailedMessageCount || 0);
         const duration = formatRunDuration(result.startedAt, result.completedAt);
-        const durationText = duration ? `Run time: ${duration}. ` : '';
-        const archiveText = result.archiveOnLabelEnabled
-          ? `archived ${archived} Inbox message(s) from ` +
-            `${archivedConversations} conversation(s); `
-          : '';
-        const archiveWarningText = archiveFailures > 0
-          ? `${archiveFailures} archive warning(s); `
-          : '';
-        return `${durationText}Reviewed ${reviewed} conversation(s); ` +
-          archiveText +
-          archiveWarningText +
-          `moved ${moved} message(s); ` +
-          `sent ${summaries} deletion summary email(s); ` +
-          `sent ${updateOnlyEmails} update-only email(s).`;
+        const lines = [
+          `Run time: ${duration || 'Not recorded'}`,
+          `Conversations reviewed: ${reviewed}`,
+          `Messages moved: ${moved}`,
+          `Emails sent: ${summaries + updateOnlyEmails}`,
+        ];
+        if (result.archiveOnLabelEnabled) {
+          lines.push(
+            `Inbox messages archived: ${archived} from ` +
+              `${archivedConversations} conversation(s)`,
+          );
+        }
+        if (archiveFailures > 0) {
+          lines.push(`Archive warnings: ${archiveFailures}`);
+        }
+        return lines.join('\n');
       }
 
       function formatRunDuration(startedAt, completedAt) {
