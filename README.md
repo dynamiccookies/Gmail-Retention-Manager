@@ -393,7 +393,7 @@ not user preferences.
 | Function | Purpose |
 |---|---|
 | `enforceGmailRetention()` | Main retention processor; use this function for the scheduled trigger |
-| `diagnoseGmailRetentionLabels()` | Runs label setup and detailed label diagnostics without reading, relabeling, or trashing conversations |
+| `runRetentionLabelDiagnostics()` | Runs read-only label diagnostics without creating labels or reading, relabeling, or trashing conversations |
 | `getRetentionConfiguration()` | Initializes and returns the versioned active settings without changing Gmail |
 
 ## Verbose Diagnostics
@@ -407,7 +407,7 @@ Set:
 Then run:
 
 ```javascript
-diagnoseGmailRetentionLabels
+runRetentionLabelDiagnostics
 ```
 
 Verbose output includes:
@@ -452,7 +452,7 @@ Retention/7d
 Retention/6 months
 ```
 
-Run `diagnoseGmailRetentionLabels()` with verbose logging enabled to see exactly how every Gmail label is being parsed.
+Run `runRetentionLabelDiagnostics()` with verbose logging enabled to see exactly how every Gmail label is being parsed.
 
 ### A short retention period did not run on time
 
