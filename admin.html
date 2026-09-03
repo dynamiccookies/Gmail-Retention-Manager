@@ -422,6 +422,19 @@
         padding: 22px;
       }
 
+      .settings-panels {
+        display: flex;
+        flex-direction: column;
+      }
+
+      #notificationEmailSettingsPanel { order: 1; }
+      #filterCleanupPanel { order: 2; }
+      #labelSettingsPanel { order: 3; }
+      #scheduleSettingsPanel { order: 4; }
+      #settingsBackupsPanel { order: 5; }
+      #systemSettingsPanel { order: 6; }
+      #settingsActions { order: 7; }
+
       .form-grid {
         display: grid;
         grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1595,6 +1608,8 @@
         </article>
       </section>
 
+      <form id="settingsForm" novalidate></form>
+      <div class="settings-panels">
       <details class="panel collapsible-panel" id="scheduleSettingsPanel">
         <summary class="panel-header">
           <div>
@@ -1715,7 +1730,6 @@
         </form>
       </details>
 
-      <form id="settingsForm" novalidate>
         <details class="panel collapsible-panel" id="labelSettingsPanel">
           <summary class="panel-header">
             <div>
@@ -1729,7 +1743,7 @@
               <div class="field">
                 <label for="rootLabel">Root label</label>
                 <div class="composite-input">
-                  <input id="rootLabel" name="rootLabel" type="text" autocomplete="off">
+                  <input id="rootLabel" name="rootLabel" type="text" autocomplete="off" form="settingsForm">
                   <span class="composite-suffix" aria-hidden="true">
                     <span class="composite-example-label">Example</span>
                     <span class="composite-example-value" id="rootLabelExample">Retention/1m</span>
@@ -1749,7 +1763,7 @@
 
               <div class="field">
                 <label for="starterLabels">Starter retention labels</label>
-                <input id="starterLabels" name="starterLabels" type="text" autocomplete="off">
+                <input id="starterLabels" name="starterLabels" type="text" autocomplete="off" form="settingsForm">
                 <p class="help">
                   Comma-separated durations, such as 7d, 1m. These are used only
                   when the root label does not already exist.
@@ -1762,11 +1776,11 @@
               <div class="system-label-controls">
                 <div>
                   <label for="systemLabel">System-notification label</label>
-                  <input id="systemLabel" name="systemLabel" type="text" autocomplete="off">
+                  <input id="systemLabel" name="systemLabel" type="text" autocomplete="off" form="settingsForm">
                 </div>
                 <div class="system-label-color-control">
                   <label for="systemLabelColorButton">Label color</label>
-                  <input id="systemLabelColor" name="systemLabelColor" type="hidden">
+                  <input id="systemLabelColor" name="systemLabelColor" type="hidden" form="settingsForm">
                   <button
                     class="system-label-color-button"
                     id="systemLabelColorButton"
@@ -1824,7 +1838,7 @@
                 </p>
               </div>
               <label class="switch" aria-label="Archive retention-labeled messages">
-                <input id="archiveOnLabel" type="checkbox">
+                <input id="archiveOnLabel" type="checkbox" form="settingsForm">
                 <span class="switch-track"></span>
               </label>
             </div>
@@ -1844,7 +1858,7 @@
               <div class="field">
                 <label for="subjectPrefix">Notification email subject prefix</label>
                 <div class="composite-input">
-                  <input id="subjectPrefix" name="subjectPrefix" type="text" autocomplete="off">
+                  <input id="subjectPrefix" name="subjectPrefix" type="text" autocomplete="off" form="settingsForm">
                   <span class="composite-suffix" aria-hidden="true">
                     <span class="composite-example-label">Example</span>
                     <span class="composite-example-value" id="subjectPrefixExample">[Retention Manager] 3 messages deleted</span>
@@ -1859,7 +1873,7 @@
 
               <div class="field">
                 <label for="notificationRetention">Notification email retention period</label>
-                <input id="notificationRetention" name="notificationRetention" type="text" autocomplete="off">
+                <input id="notificationRetention" name="notificationRetention" type="text" autocomplete="off" form="settingsForm">
                 <p class="help">
                   Controls how long generated deletion summaries and update-only
                   notices remain before becoming eligible to move to Trash.
@@ -1889,7 +1903,7 @@
                 </p>
               </div>
               <label class="switch" aria-label="Check for updates">
-                <input id="checkForUpdates" type="checkbox">
+                <input id="checkForUpdates" type="checkbox" form="settingsForm">
                 <span class="switch-track"></span>
               </label>
             </div>
@@ -1905,15 +1919,13 @@
                 </p>
               </div>
               <label class="switch" aria-label="Verbose logging">
-                <input id="verboseLogging" type="checkbox">
+                <input id="verboseLogging" type="checkbox" form="settingsForm">
                 <span class="switch-track"></span>
               </label>
             </div>
 
           </div>
         </details>
-
-      </form>
 
       <details class="panel collapsible-panel" id="filterCleanupPanel">
         <summary class="panel-header">
@@ -2013,6 +2025,7 @@
         >
           Save changes
         </button>
+      </div>
       </div>
 
       <footer class="metadata resource-footer">
@@ -2117,8 +2130,6 @@
         ].forEach(id => {
           elements[id] = document.getElementById(id);
         });
-
-        arrangeSettingsPanels();
 
         elements.themeToggle.addEventListener('change', queueThemePreferenceSave);
         elements.retryButton.addEventListener('click', loadAdminPage);
@@ -2389,25 +2400,6 @@
           elements.labelSettingsPanel,
           elements.systemSettingsPanel,
         ];
-      }
-
-      function arrangeSettingsPanels() {
-        getSettingsPanels().forEach(panel => {
-          panel.querySelectorAll('input, select, textarea').forEach(control => {
-            control.setAttribute('form', 'settingsForm');
-          });
-        });
-
-        [
-          elements.notificationEmailSettingsPanel,
-          elements.filterCleanupPanel,
-          elements.labelSettingsPanel,
-          elements.scheduleSettingsPanel,
-          elements.settingsBackupsPanel,
-          elements.systemSettingsPanel,
-        ].forEach(panel => {
-          elements.settingsActions.before(panel);
-        });
       }
 
       function updateSettingExamples() {
