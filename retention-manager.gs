@@ -84,7 +84,7 @@ const RETENTION_DELETION_OUTBOX_CHUNK_PREFIX =
   'GMAIL_RETENTION_DELETION_REPORT_CHUNK_';
 const RETENTION_DELETION_OUTBOX_SCHEMA_VERSION = 1;
 const RETENTION_DELETION_OUTBOX_CHUNK_SIZE = 7500;
-const RETENTION_DELETION_OUTBOX_MAX_ENCODED_CHARACTERS = 375000;
+const RETENTION_DELETION_OUTBOX_MAX_ENCODED_CHARACTERS = 175000;
 const RETENTION_ADMIN_PREFERENCES_PROPERTY_KEY =
   'GMAIL_RETENTION_ADMIN_PREFERENCES';
 const RETENTION_ADMIN_PAGE_URL_PROPERTY_KEY =
@@ -5346,15 +5346,42 @@ function saveDeletionReportOutbox_(outbox) {
     );
   }
 
-  clearDeletionReportOutbox_();
   const properties = PropertiesService.getScriptProperties();
+  const existingMetadataValue = properties.getProperty(
+    RETENTION_DELETION_OUTBOX_PROPERTY_KEY,
+  );
+  let activeStorageId = '';
+  try {
+    const existingMetadata = existingMetadataValue
+      ? JSON.parse(existingMetadataValue)
+      : null;
+    activeStorageId = existingMetadata &&
+        typeof existingMetadata.storageId === 'string'
+      ? existingMetadata.storageId
+      : '';
+  } catch (error) {
+    activeStorageId = '';
+  }
+  const activeChunkPrefix = activeStorageId
+    ? `${RETENTION_DELETION_OUTBOX_CHUNK_PREFIX}${activeStorageId}_`
+    : '';
+  Object.keys(properties.getProperties())
+    .filter(key =>
+      key.startsWith(RETENTION_DELETION_OUTBOX_CHUNK_PREFIX) &&
+        (!activeChunkPrefix || !key.startsWith(activeChunkPrefix)),
+    )
+    .forEach(key => properties.deleteProperty(key));
+
+  const storageId = Utilities.getUuid();
+  const newChunkPrefix =
+    `${RETENTION_DELETION_OUTBOX_CHUNK_PREFIX}${storageId}_`;
   const chunks = chunkArray(
     encoded.split(''),
     RETENTION_DELETION_OUTBOX_CHUNK_SIZE,
   ).map(chunk => chunk.join(''));
   const values = {};
   chunks.forEach((chunk, index) => {
-    values[`${RETENTION_DELETION_OUTBOX_CHUNK_PREFIX}${index}`] = chunk;
+    values[`${newChunkPrefix}${index}`] = chunk;
   });
   properties.setProperties(values, false);
   properties.setProperty(
@@ -5363,8 +5390,15 @@ function saveDeletionReportOutbox_(outbox) {
       schemaVersion: RETENTION_DELETION_OUTBOX_SCHEMA_VERSION,
       chunkCount: chunks.length,
       id: serializable.id,
+      storageId,
     }),
   );
+  Object.keys(properties.getProperties())
+    .filter(key =>
+      key.startsWith(RETENTION_DELETION_OUTBOX_CHUNK_PREFIX) &&
+        !key.startsWith(newChunkPrefix),
+    )
+    .forEach(key => properties.deleteProperty(key));
   return serializable;
 }
 
@@ -5384,14 +5418,17 @@ function getDeletionReportOutbox_() {
       !isConfigurationObject(metadata) ||
       metadata.schemaVersion !== RETENTION_DELETION_OUTBOX_SCHEMA_VERSION ||
       !Number.isInteger(metadata.chunkCount) ||
-      metadata.chunkCount < 1
+      metadata.chunkCount < 1 ||
+      typeof metadata.storageId !== 'string' ||
+      !metadata.storageId
     ) {
       throw new Error('invalid deletion-report metadata');
     }
     let encoded = '';
     for (let index = 0; index < metadata.chunkCount; index += 1) {
       const chunk = properties.getProperty(
-        `${RETENTION_DELETION_OUTBOX_CHUNK_PREFIX}${index}`,
+        `${RETENTION_DELETION_OUTBOX_CHUNK_PREFIX}` +
+          `${metadata.storageId}_${index}`,
       );
       if (!chunk) {
         throw new Error(`missing deletion-report chunk ${index}`);
