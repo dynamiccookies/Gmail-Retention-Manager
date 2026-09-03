@@ -5504,18 +5504,16 @@ function initializeDefaultRetentionLabels() {
 }
 
 /**
- * Diagnostic-only entry point. It performs setup and label discovery but never
- * reads, relabels, or trashes any Gmail conversation. Set VERBOSE_LOGGING to
- * true, save the project, and run this function while troubleshooting.
+ * Read-only diagnostic entry point. It discovers labels but never creates labels
+ * or reads, relabels, or trashes Gmail conversations.
  */
-function diagnoseGmailRetentionLabels() {
+function runRetentionLabelDiagnostics() {
   console.log(
     `Starting label diagnostics for ${RETENTION_CONFIG.APPLICATION_NAME} ` +
       `${RETENTION_CONFIG.VERSION}.`,
   );
   verboseLabelSnapshot('DIAGNOSTIC INITIAL LABEL SNAPSHOT');
-  const initializedLabels = initializeDefaultRetentionLabels();
-  const policies = discoverRetentionLabels(initializedLabels);
+  const policies = discoverRetentionLabels();
   verboseLabelSnapshot('DIAGNOSTIC FINAL LABEL SNAPSHOT');
   console.log(
     `Label diagnostics complete. Recognized ${policies.length} valid ` +
