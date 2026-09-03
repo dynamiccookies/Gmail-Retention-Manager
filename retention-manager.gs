@@ -4328,6 +4328,19 @@ function repairRetentionScheduleFromAdmin(request) {
  */
 function runRetentionFromAdmin() {
   assertAdminOwnerAccess();
+  const pendingRuntime = getRetentionRuntimeState();
+  if (isRetentionRunPending_(pendingRuntime)) {
+    return {
+      result: {
+        status: 'skipped',
+        reason: pendingRuntime.lastRunStatus === 'queued'
+          ? 'A retention run is already queued.'
+          : 'A retention run is already in progress.',
+      },
+      runtime: pendingRuntime,
+      trigger: getRetentionTriggerStatus(),
+    };
+  }
   const result = enforceGmailRetention();
 
   return {
@@ -5491,6 +5504,13 @@ function escapeRegExp(value) {
  * @return {Object} Serializable outcome of the retention run.
  */
 function enforceGmailRetention(event) {
+  const queuedRequest = getQueuedRetentionRunRequest_();
+  const eventTriggerId = event && typeof event.triggerUid === 'string'
+    ? event.triggerUid
+    : '';
+  const queuedSidebarEvent = Boolean(
+    queuedRequest && queuedRequest.triggerId === eventTriggerId,
+  );
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
     const reason = 'Another retention run is already active. This run was skipped.';
@@ -5502,7 +5522,7 @@ function enforceGmailRetention(event) {
   }
 
   const startedAt = new Date();
-  let runSource = getRetentionRunSource(event);
+  let runSource = queuedSidebarEvent ? 'manual' : getRetentionRunSource(event);
   try {
     const queuedSidebarRun = prepareQueuedRetentionRun_(event);
     runSource = queuedSidebarRun ? 'manual' : runSource;
