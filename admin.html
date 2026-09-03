@@ -4343,7 +4343,15 @@
               updateScheduleDirtyState();
             }
           })
-          .withFailureHandler(() => {})
+          .withFailureHandler(error => {
+            const message = `Status refresh failed: ${getErrorMessage(error)}`;
+            console.warn(message);
+            if (elements.globalNotice.hidden) {
+              showNotice(message, 'warning');
+            } else if (!elements.globalNotice.textContent.includes(message)) {
+              elements.globalNotice.textContent += ` ${message}`;
+            }
+          })
           .getAdminRuntimeData();
       }
 
