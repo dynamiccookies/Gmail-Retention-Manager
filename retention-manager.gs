@@ -5103,26 +5103,37 @@ function escapeRegExp(value) {
  * @return {Object} Serializable outcome of the retention run.
  */
 function enforceGmailRetention(event) {
-  const startedAt = new Date();
-  const queuedSidebarRun = prepareQueuedRetentionRun_(event);
-  const runSource = queuedSidebarRun ? 'manual' : getRetentionRunSource(event);
-  rememberCurrentAdminPageUrl_();
-  const startedState = {
-    lastRunSource: runSource,
-    lastRunStatus: 'running',
-    lastRunQueuedAt: null,
-    lastRunStartedAt: startedAt.toISOString(),
-    lastRunCompletedAt: null,
-    lastResult: null,
-  };
-  if (runSource === 'scheduled') {
-    startedState.lastScheduledRunStartedAt = startedAt.toISOString();
-  } else {
-    startedState.lastManualRunStartedAt = startedAt.toISOString();
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
+    const reason = 'Another retention run is already active. This run was skipped.';
+    console.log(reason);
+    return {
+      status: 'skipped',
+      reason,
+    };
   }
-  updateRetentionRuntimeStateSafely(startedState);
 
+  const startedAt = new Date();
+  let runSource = getRetentionRunSource(event);
   try {
+    const queuedSidebarRun = prepareQueuedRetentionRun_(event);
+    runSource = queuedSidebarRun ? 'manual' : runSource;
+    rememberCurrentAdminPageUrl_();
+    const startedState = {
+      lastRunSource: runSource,
+      lastRunStatus: 'running',
+      lastRunQueuedAt: null,
+      lastRunStartedAt: startedAt.toISOString(),
+      lastRunCompletedAt: null,
+      lastResult: null,
+    };
+    if (runSource === 'scheduled') {
+      startedState.lastScheduledRunStartedAt = startedAt.toISOString();
+    } else {
+      startedState.lastManualRunStartedAt = startedAt.toISOString();
+    }
+    updateRetentionRuntimeStateSafely(startedState);
+
     const result = executeGmailRetention_();
     const completedAt = new Date();
     const completedResult = {
@@ -5181,6 +5192,8 @@ function enforceGmailRetention(event) {
     }
     updateRetentionRuntimeStateSafely(failedState);
     throw error;
+  } finally {
+    lock.releaseLock();
   }
 }
 
@@ -5188,18 +5201,6 @@ function enforceGmailRetention(event) {
 function executeGmailRetention_() {
   const settings = getRetentionSettings();
   verboseLog('MAIN', 'enforceGmailRetention() entered.');
-  const lock = LockService.getScriptLock();
-  verboseLog('LOCK', `Attempting script lock for ${RETENTION_CONFIG.LOCK_TIMEOUT_MS} ms.`);
-
-  if (!lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
-    const reason = 'Another retention run is already active. This run was skipped.';
-    console.log(reason);
-    return {
-      status: 'skipped',
-      reason,
-    };
-  }
-
   try {
     verboseLog('LOCK', 'Script lock acquired.');
     const now = new Date();
@@ -5532,8 +5533,6 @@ function executeGmailRetention_() {
     );
     throw error;
   } finally {
-    verboseLog('LOCK', 'Releasing script lock.');
-    lock.releaseLock();
     verboseLog('MAIN', 'enforceGmailRetention() exited.');
   }
 }
