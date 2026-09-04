@@ -89,15 +89,12 @@ const RETENTION_ADMIN_PREFERENCES_PROPERTY_KEY =
   'GMAIL_RETENTION_ADMIN_PREFERENCES';
 const RETENTION_ADMIN_PAGE_URL_PROPERTY_KEY =
   'GMAIL_RETENTION_ADMIN_PAGE_URL';
-const RETENTION_ADMIN_PAGE_URL_CACHE_KEY =
-  'GMAIL_RETENTION_ADMIN_PAGE_URL_CACHE';
-const RETENTION_ADMIN_PAGE_SETUP_PROPERTY_KEY =
-  'GMAIL_RETENTION_ADMIN_PAGE_SETUP';
-const RETENTION_ADMIN_PAGE_SETUP_HANDLER =
-  'registerRetentionAdminPageUrl';
-const RETENTION_ADMIN_PAGE_SETUP_STALE_MS = 10 * 60 * 1000;
 const RETENTION_SIDEBAR_RUN_PROPERTY_KEY =
   'GMAIL_RETENTION_SIDEBAR_RUN_REQUEST';
+const RETENTION_CONTINUATION_PROPERTY_KEY =
+  'GMAIL_RETENTION_CONTINUATION_STATE';
+const RETENTION_CONTINUATION_SCHEMA_VERSION = 2;
+const RETENTION_CONTINUATION_HANDLER = 'continueGmailRetention';
 const RETENTION_FILTER_CLEANUP_HISTORY_PROPERTY_KEY =
   'GMAIL_RETENTION_FILTER_CLEANUP_HISTORY';
 const RETENTION_FILTER_CLEANUP_HISTORY_SCHEMA_VERSION = 1;
@@ -219,7 +216,7 @@ const RETENTION_CONFIG = Object.freeze({
   APPLICATION_NAME: 'Retention Manager for Gmail™',
 
   // Displayed in notification footers and linked to the matching GitHub release.
-  VERSION: '0.7.0',
+  VERSION: '0.7.1',
   PROJECT_REPOSITORY_URL:
     'https://github.com/dynamiccookies/retention-manager-for-gmail',
 
@@ -245,6 +242,17 @@ const RETENTION_CONFIG = Object.freeze({
 
   // Gmail Apps Script methods are safest when processed in moderate batches.
   THREAD_PAGE_SIZE: 100,
+  // threads.get currently costs 40 of Gmail's 6,000 per-user quota units.
+  // Fifty reads leave headroom for labels, Trash operations, and notifications.
+  THREAD_PROCESSING_BATCH_SIZE: 50,
+  // Wait through the remainder of Gmail's rolling per-minute quota window.
+  QUOTA_WINDOW_MS: 61 * 1000,
+  // Short waits repeatedly hit the same rolling window in real-world testing.
+  MIN_QUOTA_PAUSE_MS: 30 * 1000,
+  // Leave time for result persistence before Apps Script's execution ceiling.
+  MAX_INLINE_SCAN_RUNTIME_MS: 5 * 60 * 1000,
+  // Installed add-ons may not create clock triggers less than one hour apart.
+  RUNTIME_CONTINUATION_DELAY_MS: 60 * 60 * 1000,
   // Large deletion runs are split into multiple complete summary messages.
   MAX_ROWS_PER_NOTIFICATION: 200,
 
@@ -363,15 +371,25 @@ function executeGmailApiWithRetry_(operation) {
     } catch (error) {
       lastError = error;
       const message = getRuntimeErrorMessage(error);
+      if (isGmailApiQuotaError_(message)) {
+        break;
+      }
       const retryable = /precondition|rate limit|backend|internal|temporar|\b429\b|\b500\b|\b503\b/i
         .test(message);
       if (!retryable || attempt === 3) {
         break;
       }
-      Utilities.sleep(250 * attempt);
+      Utilities.sleep((2 ** (attempt - 1)) * 1000 + Math.floor(Math.random() * 1000));
     }
   }
   throw lastError;
+}
+
+/** Returns whether Gmail rejected a request against a time-based API quota. */
+function isGmailApiQuotaError_(error) {
+  return /quota exceeded|quota metric|units per minute|total query cost/i.test(
+    getRuntimeErrorMessage(error),
+  );
 }
 
 /** Runs one Gmail read with bounded retries for transient API failures. */
@@ -420,6 +438,9 @@ function readGmailApiThreadResource_(threadId) {
     return validateGmailApiThreadResource_(metadataThread, threadId);
   } catch (error) {
     metadataError = error;
+    if (isGmailApiQuotaError_(error)) {
+      throw error;
+    }
     verboseLog('THREAD METADATA READ FALLBACK', () => ({
       threadId,
       error: getRuntimeErrorMessage(error),
@@ -521,6 +542,11 @@ function createGmailApiThread_(threadId) {
         'me',
         threadId,
       );
+      gmailApiThreadCache.delete(threadId);
+      return createGmailApiThread_(threadId);
+    },
+    moveToTrash: () => {
+      Gmail.Users.Threads.trash('me', threadId);
       gmailApiThreadCache.delete(threadId);
       return createGmailApiThread_(threadId);
     },
@@ -1992,6 +2018,182 @@ function createManagedRetentionTrigger(preferences) {
   return builder.create();
 }
 
+/** @return {?Object} Valid per-user continuation state. */
+function getRetentionContinuationState_() {
+  const properties = PropertiesService.getUserProperties();
+  const stored = properties.getProperty(RETENTION_CONTINUATION_PROPERTY_KEY);
+  if (!stored) {
+    return null;
+  }
+  try {
+    const parsed = JSON.parse(stored);
+    if (
+      !isConfigurationObject(parsed) ||
+      parsed.schemaVersion !== RETENTION_CONTINUATION_SCHEMA_VERSION ||
+      !Number.isSafeInteger(parsed.nextOffset) ||
+      parsed.nextOffset < 0 ||
+      !Number.isSafeInteger(parsed.totalConversationCount) ||
+      parsed.totalConversationCount < 0 ||
+      typeof parsed.scanStartedAt !== 'string' ||
+      Number.isNaN(new Date(parsed.scanStartedAt).getTime()) ||
+      typeof parsed.runId !== 'string' ||
+      !parsed.runId ||
+      (
+        parsed.triggerId !== null &&
+        (typeof parsed.triggerId !== 'string' || !parsed.triggerId)
+      ) ||
+      !isValidRetentionContinuationTotals_(parsed.totals)
+    ) {
+      throw new Error('invalid continuation state');
+    }
+    return parsed;
+  } catch (error) {
+    console.error(
+      `Ignoring invalid ${RETENTION_CONTINUATION_PROPERTY_KEY}: ` +
+        getRuntimeErrorMessage(error),
+    );
+    properties.deleteProperty(RETENTION_CONTINUATION_PROPERTY_KEY);
+    return null;
+  }
+}
+
+/** Persists a resumable position without creating a follow-up trigger. */
+function saveRetentionContinuationCheckpoint_(
+  nextOffset,
+  totalConversationCount,
+  totals,
+  runId,
+) {
+  const current = getRetentionContinuationState_();
+  PropertiesService.getUserProperties().setProperty(
+    RETENTION_CONTINUATION_PROPERTY_KEY,
+    JSON.stringify({
+      schemaVersion: RETENTION_CONTINUATION_SCHEMA_VERSION,
+      nextOffset,
+      totalConversationCount,
+      runId: current && current.runId ? current.runId : runId,
+      triggerId: current && current.triggerId ? current.triggerId : null,
+      totals,
+      scanStartedAt: current && current.scanStartedAt
+        ? current.scanStartedAt
+        : new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }),
+  );
+}
+
+/** @return {Object} Zeroed metrics accumulated across one complete pass. */
+function createEmptyRetentionContinuationTotals_() {
+  return {
+    reviewedConversationCount: 0,
+    movedMessageCount: 0,
+    movedOrdinaryMessageCount: 0,
+    movedSystemMessageCount: 0,
+    movedConversationCount: 0,
+    reportedMessageCount: 0,
+    removedRetentionLabelCount: 0,
+    archivedMessageCount: 0,
+    archivedConversationCount: 0,
+    archiveLookupFailureCount: 0,
+    archiveFailedMessageCount: 0,
+    summaryEmailCount: 0,
+    updateOnlyEmailCount: 0,
+    quotaPauseCount: 0,
+    quotaWaitMilliseconds: 0,
+  };
+}
+
+/** Returns whether persisted pass totals contain only nonnegative integers. */
+function isValidRetentionContinuationTotals_(totals) {
+  if (!isConfigurationObject(totals)) {
+    return false;
+  }
+  return Object.keys(createEmptyRetentionContinuationTotals_()).every(key =>
+    Number.isSafeInteger(totals[key]) && totals[key] >= 0,
+  );
+}
+
+/** Adds one batch's numeric outcome to the current pass totals. */
+function addRetentionContinuationTotals_(totals, batch) {
+  return Object.fromEntries(
+    Object.keys(createEmptyRetentionContinuationTotals_()).map(key => [
+      key,
+      totals[key] + batch[key],
+    ]),
+  );
+}
+
+/** Removes a pending continuation trigger and its per-user cursor. */
+function clearRetentionContinuation_() {
+  const state = getRetentionContinuationState_();
+  if (state && state.triggerId) {
+    deleteProjectTriggerById_(state.triggerId);
+  }
+  PropertiesService.getUserProperties().deleteProperty(
+    RETENTION_CONTINUATION_PROPERTY_KEY,
+  );
+}
+
+/** Saves the next offset and ensures exactly one follow-up batch is queued. */
+function scheduleRetentionContinuation_(nextOffset, totals, delayMs, runId) {
+  const current = getRetentionContinuationState_();
+  let triggerId = current && current.triggerId ? current.triggerId : null;
+  const triggerStillExists = triggerId && ScriptApp.getProjectTriggers().some(
+    trigger => trigger.getUniqueId() === triggerId,
+  );
+  if (!triggerStillExists) {
+    const trigger = ScriptApp.newTrigger(RETENTION_CONTINUATION_HANDLER)
+      .timeBased()
+      .after(delayMs || RETENTION_CONFIG.RUNTIME_CONTINUATION_DELAY_MS)
+      .create();
+    triggerId = trigger.getUniqueId();
+  }
+  PropertiesService.getUserProperties().setProperty(
+    RETENTION_CONTINUATION_PROPERTY_KEY,
+    JSON.stringify({
+      schemaVersion: RETENTION_CONTINUATION_SCHEMA_VERSION,
+      nextOffset,
+      totalConversationCount: current
+        ? current.totalConversationCount
+        : nextOffset,
+      runId: current && current.runId ? current.runId : runId,
+      triggerId,
+      totals: totals || (current && current.totals) ||
+        createEmptyRetentionContinuationTotals_(),
+      scanStartedAt: current && current.scanStartedAt
+        ? current.scanStartedAt
+        : new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    }),
+  );
+}
+
+/** Runs a quota-spaced follow-up batch without changing the managed schedule. */
+function continueGmailRetention(event) {
+  const state = getRetentionContinuationState_();
+  const eventTriggerId = event && typeof event.triggerUid === 'string'
+    ? event.triggerUid
+    : '';
+  if (!state || !state.triggerId || state.triggerId !== eventTriggerId) {
+    return { status: 'skipped', reason: 'No matching continuation was pending.' };
+  }
+  // A one-time trigger has now been claimed. Preserve its cursor until the
+  // batch succeeds, but allow that batch to queue the next trigger.
+  deleteProjectTriggerById_(state.triggerId);
+  PropertiesService.getUserProperties().setProperty(
+    RETENTION_CONTINUATION_PROPERTY_KEY,
+    JSON.stringify({ ...state, triggerId: null }),
+  );
+  const result = enforceGmailRetention({
+    ...event,
+    retentionContinuation: true,
+  });
+  if (result && result.status === 'skipped') {
+    scheduleRetentionContinuation_(state.nextOffset, state.totals);
+  }
+  return result;
+}
+
 /** @return {Object} Empty operational state for a new installation. */
 function createDefaultRetentionRuntimeState() {
   return {
@@ -2010,8 +2212,10 @@ function createDefaultRetentionRuntimeState() {
     lastManualRunCompletedAt: null,
     lastManualResult: null,
     lastErrorAt: null,
+    lastErrorRunId: null,
     lastErrorMessage: null,
     lastResult: null,
+    activeRunId: null,
   };
 }
 
@@ -2063,6 +2267,9 @@ function getRetentionRuntimeState() {
  * @return {string} scheduled or manual.
  */
 function getRetentionRunSource(event) {
+  if (event && event.retentionContinuation === true) {
+    return 'continuation';
+  }
   return event && typeof event.triggerUid === 'string' && event.triggerUid
     ? 'scheduled'
     : 'manual';
@@ -2139,7 +2346,6 @@ function assertAdminOwnerAccess() {
  */
 function doGet() {
   assertAdminOwnerAccess();
-  rememberCurrentAdminPageUrl_();
 
   return HtmlService.createHtmlOutputFromFile('admin')
     .setTitle(RETENTION_CONFIG.APPLICATION_NAME)
@@ -2882,7 +3088,7 @@ function getAdminPageData() {
     ],
     backups: getRetentionSettingsBackupsForAdmin(),
     adminPreferences: getRetentionAdminPreferences(),
-    runtime: getRetentionRuntimeState(),
+    runtime: getRetentionRuntimeStateForClient_(),
     trigger,
     filterCleanup: null,
   };
@@ -2898,8 +3104,17 @@ function getAvailableUpdateForAdmin() {
 function getAdminRuntimeData() {
   assertAdminOwnerAccess();
   return {
-    runtime: getRetentionRuntimeState(),
+    runtime: getRetentionRuntimeStateForClient_(),
     trigger: getRetentionTriggerStatus(),
+  };
+}
+
+/** Adds a server-authoritative active flag for admin-page controls. */
+function getRetentionRuntimeStateForClient_() {
+  const runtime = getRetentionRuntimeState();
+  return {
+    ...runtime,
+    runPending: isRetentionRunPending_(runtime),
   };
 }
 
@@ -2981,6 +3196,8 @@ function formatSidebarStatus_(label, status) {
     active: '#137333',
     error: '#c5221f',
     warning: '#b06000',
+    paused: '#b06000',
+    continuing: '#4285f4',
     running: '#4285f4',
     queued: '#b06000',
     skipped: '#b06000',
@@ -3007,7 +3224,21 @@ function createSidebarSection_(heading) {
 
 /** @return {boolean} Whether a queued/running status is still operationally live. */
 function isRetentionRunPending_(runtime) {
-  if (!runtime || !['queued', 'running'].includes(runtime.lastRunStatus)) {
+  if (!runtime) {
+    return false;
+  }
+  if (['paused', 'continuing'].includes(runtime.lastRunStatus)) {
+    const result = runtime.lastResult;
+    const continuationAt = result && result.nextContinuationAt
+      ? new Date(result.nextContinuationAt)
+      : null;
+    return Boolean(
+      result && result.continuationQueued &&
+      continuationAt && !Number.isNaN(continuationAt.getTime()) &&
+      Date.now() - continuationAt.getTime() < RETENTION_SIDEBAR_RUN_STALE_MS,
+    );
+  }
+  if (!['queued', 'running'].includes(runtime.lastRunStatus)) {
     return false;
   }
   const timestamp = runtime.lastRunStatus === 'queued'
@@ -3078,7 +3309,7 @@ function formatSidebarRunDuration_(startedAt, completedAt) {
  * @param {Object|null} result Runtime result.
  * @return {string} Compact result summary.
  */
-function getSidebarResultSummary_(result) {
+function getSidebarResultSummary_(result, timeZone) {
   if (!result || !isConfigurationObject(result)) {
     return 'No completed run';
   }
@@ -3096,9 +3327,42 @@ function getSidebarResultSummary_(result) {
     result.startedAt,
     result.completedAt,
   );
-  return `${reviewed} conversation${reviewed === 1 ? '' : 's'} reviewed · ` +
+  const progress = result.scanComplete === false &&
+      Number.isFinite(result.totalConversationCount)
+    ? `${reviewed} of ${result.totalConversationCount} conversations reviewed`
+    : `${reviewed} conversation${reviewed === 1 ? '' : 's'} reviewed`;
+  const percent = Number.isFinite(result.progressPercent)
+    ? Math.max(0, Math.min(100, result.progressPercent))
+    : null;
+  const progressSegmentCount = 12;
+  const filled = percent === null
+    ? 0
+    : Math.round((percent / 100) * progressSegmentCount);
+  const progressBar = percent === null || result.scanComplete !== false
+    ? ''
+    : `<br><font color="#1a73e8"><b>${'▬'.repeat(filled)}</b></font>` +
+      `<font color="#d2d7df">` +
+      `${'▬'.repeat(progressSegmentCount - filled)}</font>` +
+      `<br><b>${percent}% complete</b>`;
+  const estimatedCompletion = result.estimatedCompletionAt && timeZone
+    ? `<br>Estimated completion: ${escapeHtml(Utilities.formatDate(
+      new Date(result.estimatedCompletionAt),
+      timeZone,
+      'MMM d, h:mm a z',
+    ))}`
+    : '';
+  const resumeTime = result.status === 'paused' &&
+      result.nextContinuationAt && timeZone
+    ? `<br>Resuming around ${escapeHtml(Utilities.formatDate(
+      new Date(result.nextContinuationAt),
+      timeZone,
+      'h:mm:ss a z',
+    ))}`
+    : '';
+  return `${progress}<br>` +
     `${moved} message${moved === 1 ? '' : 's'} moved` +
-    (duration ? ` · Run time: ${duration}` : '');
+    (duration ? `<br>Run time: ${duration}` : '') +
+    progressBar + estimatedCompletion + resumeTime;
 }
 
 /**
@@ -3176,6 +3440,20 @@ function formatSidebarTimeRange_(start, end, timeZone) {
  * @return {string} Next-run display.
  */
 function getSidebarNextRunText_(trigger, runtime) {
+  const continuationResult = runtime && runtime.lastResult;
+  if (
+    continuationResult &&
+    continuationResult.scanComplete === false &&
+    continuationResult.nextContinuationAt &&
+    trigger.preferences && trigger.preferences.timeZone
+  ) {
+    return `Retention scan resumes around ` +
+      `${Utilities.formatDate(
+        new Date(continuationResult.nextContinuationAt),
+        trigger.preferences.timeZone,
+        'MMM d, yyyy · h:mm:ss a z',
+      )}`;
+  }
   if (!trigger.enabled || trigger.status === 'disabled') {
     return 'Not scheduled';
   }
@@ -3303,7 +3581,16 @@ function buildRetentionSidebarCard_(overrides = {}) {
           runtime.lastRunStatus,
         )),
   );
-  if (runPending) {
+  if (
+    runPending &&
+    ['paused', 'continuing'].includes(runtime.lastRunStatus)
+  ) {
+    statusSection.addWidget(
+      CardService.newTextParagraph().setText(
+        getSidebarResultSummary_(runtime.lastResult, preferences.timeZone),
+      ),
+    );
+  } else if (runPending) {
     const pendingAt = runtime.lastRunStatus === 'queued'
       ? runtime.lastRunQueuedAt
       : runtime.lastRunStartedAt;
@@ -3328,10 +3615,20 @@ function buildRetentionSidebarCard_(overrides = {}) {
               : ' · scan in progress.'),
       ),
     );
+    if (
+      runtime.lastRunStatus === 'running' &&
+      runtime.lastResult && runtime.lastResult.scanComplete === false
+    ) {
+      statusSection.addWidget(
+        CardService.newTextParagraph().setText(
+          getSidebarResultSummary_(runtime.lastResult, preferences.timeZone),
+        ),
+      );
+    }
   } else if (runtime.lastRunStatus !== 'never') {
     statusSection.addWidget(
       CardService.newTextParagraph().setText(
-        getSidebarResultSummary_(runtime.lastResult),
+        getSidebarResultSummary_(runtime.lastResult, preferences.timeZone),
       ),
     );
   }
@@ -3452,46 +3749,30 @@ function buildRetentionSidebarCard_(overrides = {}) {
         ),
     );
   } else {
-    const adminPageSetup = ensureAdminPageSetupQueued_();
+    actionsSection.addWidget(
+      CardService.newTextParagraph().setText(
+        'Paste the Web app URL shown when you deployed this project. ' +
+          'The URL must end in <b>/exec</b>.',
+      ),
+    );
+    actionsSection.addWidget(
+      CardService.newTextInput()
+        .setFieldName('adminPageUrl')
+        .setTitle('Web App URL')
+        .setValue(typeof overrides.adminPageUrl === 'string'
+          ? overrides.adminPageUrl
+          : ''),
+    );
     actionsSection.addWidget(
       CardService.newTextButton()
-        .setText(adminPageSetup.status === 'error'
-          ? 'Advanced Settings Unavailable'
-          : 'Advanced Settings — Setting Up…')
-        .setDisabled(true),
+        .setText('Save Web App URL')
+        .setTextButtonStyle(CardService.TextButtonStyle.FILLED)
+        .setOnClickAction(
+          CardService.newAction()
+            .setFunctionName('saveRetentionAdminPageUrl')
+            .setLoadIndicator(CardService.LoadIndicator.SPINNER),
+        ),
     );
-    if (adminPageSetup.status === 'error') {
-      actionsSection.addWidget(
-        CardService.newTextParagraph().setText(
-          `<font color="#c5221f">${escapeHtml(adminPageSetup.message)}</font>`,
-        ),
-      );
-      actionsSection.addWidget(
-        CardService.newTextButton()
-          .setText('Retry Setup')
-          .setOnClickAction(
-            CardService.newAction()
-              .setFunctionName('retryRetentionAdminPageSetup')
-              .setLoadIndicator(CardService.LoadIndicator.SPINNER),
-          ),
-      );
-    } else {
-      actionsSection.addWidget(
-        CardService.newTextParagraph().setText(
-          '<font color="#1a73e8">Finishing one-time setup in the ' +
-            'background.</font>',
-        ),
-      );
-      actionsSection.addWidget(
-        CardService.newTextButton()
-          .setText('Refresh')
-          .setOnClickAction(
-            CardService.newAction()
-              .setFunctionName('refreshRetentionSidebarStatus')
-              .setLoadIndicator(CardService.LoadIndicator.SPINNER),
-          ),
-      );
-    }
   }
   card.addSection(actionsSection);
 
@@ -3772,6 +4053,8 @@ function getQueuedRetentionRunRequest_() {
       !isConfigurationObject(parsed) ||
       typeof parsed.triggerId !== 'string' ||
       !parsed.triggerId ||
+      typeof parsed.runId !== 'string' ||
+      !parsed.runId ||
       typeof parsed.queuedAt !== 'string' ||
       Number.isNaN(new Date(parsed.queuedAt).getTime())
     ) {
@@ -3779,6 +4062,7 @@ function getQueuedRetentionRunRequest_() {
     }
     return {
       triggerId: parsed.triggerId,
+      runId: parsed.runId,
       queuedAt: parsed.queuedAt,
       preferences: validateRetentionSchedulePreferences(parsed.preferences),
     };
@@ -3789,11 +4073,12 @@ function getQueuedRetentionRunRequest_() {
 }
 
 /** Stores the temporary trigger and the schedule it must restore. */
-function saveQueuedRetentionRunRequest_(triggerId, preferences, queuedAt) {
+function saveQueuedRetentionRunRequest_(triggerId, preferences, queuedAt, runId) {
   PropertiesService.getScriptProperties().setProperty(
     RETENTION_SIDEBAR_RUN_PROPERTY_KEY,
     JSON.stringify({
       triggerId,
+      runId,
       queuedAt,
       preferences: validateRetentionSchedulePreferences(preferences),
     }),
@@ -3848,7 +4133,7 @@ function prepareQueuedRetentionRun_(event) {
 
   try {
     restoreManagedScheduleAfterSidebarRun_(request);
-    return true;
+    return request;
   } catch (error) {
     clearQueuedRetentionRunRequest_();
     saveRetentionScheduleConfiguration(request.preferences, null);
@@ -3859,6 +4144,7 @@ function prepareQueuedRetentionRun_(event) {
       lastRunQueuedAt: null,
       lastRunCompletedAt: failedAt,
       lastErrorAt: failedAt,
+      lastErrorRunId: runId,
       lastErrorMessage:
         `Unable to restore the scheduled trigger before Run Now: ` +
         getRuntimeErrorMessage(error),
@@ -3921,10 +4207,12 @@ function runRetentionFromSidebar() {
         .after(5000)
         .create();
       const queuedAt = new Date().toISOString();
+      const runId = Utilities.getUuid();
       saveQueuedRetentionRunRequest_(
         temporaryTrigger.getUniqueId(),
         preferences,
         queuedAt,
+        runId,
       );
       saveRetentionScheduleConfiguration(
         preferences,
@@ -3934,6 +4222,7 @@ function runRetentionFromSidebar() {
         lastRunSource: 'manual',
         lastRunStatus: 'queued',
         lastRunQueuedAt: queuedAt,
+        activeRunId: runId,
         lastErrorMessage: null,
       });
     } catch (error) {
@@ -4251,6 +4540,7 @@ function applyRetentionScheduleFromAdmin(request, repairOnly, lockHeld = false) 
     }
 
     if (!preferences.enabled) {
+      clearRetentionContinuation_();
       saveRetentionScheduleConfiguration(preferences, null);
       existingTriggers.forEach(trigger => ScriptApp.deleteTrigger(trigger));
 
@@ -4326,7 +4616,7 @@ function repairRetentionScheduleFromAdmin(request) {
  *
  * @return {Object} Run result plus current runtime and trigger status.
  */
-function runRetentionFromAdmin() {
+function runRetentionFromAdmin(runId) {
   assertAdminOwnerAccess();
   const pendingRuntime = getRetentionRuntimeState();
   if (isRetentionRunPending_(pendingRuntime)) {
@@ -4337,15 +4627,21 @@ function runRetentionFromAdmin() {
           ? 'A retention run is already queued.'
           : 'A retention run is already in progress.',
       },
-      runtime: pendingRuntime,
+      runtime: {
+        ...pendingRuntime,
+        runPending: true,
+      },
       trigger: getRetentionTriggerStatus(),
     };
   }
-  const result = enforceGmailRetention();
+  const normalizedRunId = typeof runId === 'string' && runId.trim()
+    ? runId.trim().slice(0, 200)
+    : Utilities.getUuid();
+  const result = enforceGmailRetention(undefined, normalizedRunId);
 
   return {
     result,
-    runtime: getRetentionRuntimeState(),
+    runtime: getRetentionRuntimeStateForClient_(),
     trigger: getRetentionTriggerStatus(),
   };
 }
@@ -4504,20 +4800,6 @@ function getProjectReleaseUrl() {
  * @return {string} Deployed web-app URL, or an empty string when unavailable.
  */
 function getAdminPageUrl() {
-  try {
-    const cachedUrl = normalizeAdminPageUrl_(
-      CacheService.getScriptCache().get(RETENTION_ADMIN_PAGE_URL_CACHE_KEY),
-    );
-    if (cachedUrl) {
-      return cachedUrl;
-    }
-  } catch (error) {
-    verboseLog(
-      'ADMIN PAGE URL CACHE READ FAILURE',
-      () => (error && error.stack ? error.stack : String(error)),
-    );
-  }
-
   const storedUrl = PropertiesService.getScriptProperties().getProperty(
     RETENTION_ADMIN_PAGE_URL_PROPERTY_KEY,
   );
@@ -4529,7 +4811,7 @@ function getAdminPageUrl() {
  * discovery is intentionally avoided because an add-on execution can resolve
  * ScriptApp.getService().getUrl() to a library or add-on URL instead.
  *
- * @param {*} value Candidate URL from Script Properties.
+ * @param {*} value Candidate URL.
  * @return {string} Validated web-app URL, or an empty string.
  */
 function normalizeAdminPageUrl_(value) {
@@ -4541,243 +4823,29 @@ function normalizeAdminPageUrl_(value) {
     : '';
 }
 
-/** Stores one validated URL in persistent and short-term caches. */
-function storeAdminPageUrl_(value) {
-  const url = normalizeAdminPageUrl_(value);
-  if (!url) {
-    return '';
+/** Saves a manually supplied production web-app URL from the Gmail sidebar. */
+function saveRetentionAdminPageUrl(event) {
+  assertAdminOwnerAccess();
+  const submittedUrl = getSidebarFormString_(event, 'adminPageUrl', '');
+  const adminPageUrl = normalizeAdminPageUrl_(submittedUrl);
+  if (!adminPageUrl) {
+    const response = CardService.newActionResponseBuilder().setNavigation(
+      CardService.newNavigation().updateCard(
+        buildRetentionSidebarCard_({ adminPageUrl: submittedUrl }),
+      ),
+    );
+    response.setNotification(
+      CardService.newNotification().setText(
+        'Enter the deployed Web app URL ending in /exec.',
+      ),
+    );
+    return response.build();
   }
   PropertiesService.getScriptProperties().setProperty(
     RETENTION_ADMIN_PAGE_URL_PROPERTY_KEY,
-    url,
+    adminPageUrl,
   );
-  try {
-    CacheService.getScriptCache().put(
-      RETENTION_ADMIN_PAGE_URL_CACHE_KEY,
-      url,
-      21600,
-    );
-  } catch (error) {
-    verboseLog(
-      'ADMIN PAGE URL CACHE WRITE FAILURE',
-      () => (error && error.stack ? error.stack : String(error)),
-    );
-  }
-  return url;
-}
-
-/** @return {?Object} Valid one-time admin-page setup state. */
-function getAdminPageSetupState_() {
-  const stored = PropertiesService.getScriptProperties().getProperty(
-    RETENTION_ADMIN_PAGE_SETUP_PROPERTY_KEY,
-  );
-  if (!stored) {
-    return null;
-  }
-  try {
-    const state = JSON.parse(stored);
-    if (
-      !isConfigurationObject(state) ||
-      !['queued', 'error'].includes(state.status) ||
-      typeof state.updatedAt !== 'string' ||
-      Number.isNaN(new Date(state.updatedAt).getTime())
-    ) {
-      throw new Error('invalid setup state');
-    }
-    return {
-      status: state.status,
-      triggerId: typeof state.triggerId === 'string' ? state.triggerId : '',
-      updatedAt: state.updatedAt,
-      message: typeof state.message === 'string' ? state.message : '',
-    };
-  } catch (error) {
-    PropertiesService.getScriptProperties().deleteProperty(
-      RETENTION_ADMIN_PAGE_SETUP_PROPERTY_KEY,
-    );
-    return null;
-  }
-}
-
-/** Saves one serializable admin-page setup state. */
-function saveAdminPageSetupState_(state) {
-  PropertiesService.getScriptProperties().setProperty(
-    RETENTION_ADMIN_PAGE_SETUP_PROPERTY_KEY,
-    JSON.stringify(state),
-  );
-  return state;
-}
-
-/** Returns every outstanding one-time admin-page registration trigger. */
-function getAdminPageSetupTriggers_() {
-  return ScriptApp.getProjectTriggers().filter(trigger =>
-    trigger.getHandlerFunction() === RETENTION_ADMIN_PAGE_SETUP_HANDLER,
-  );
-}
-
-/** Deletes outstanding setup triggers without allowing cleanup to fail. */
-function deleteAdminPageSetupTriggers_() {
-  getAdminPageSetupTriggers_().forEach(trigger => {
-    try {
-      ScriptApp.deleteTrigger(trigger);
-    } catch (error) {
-      verboseLog(
-        'ADMIN PAGE SETUP TRIGGER DELETE FAILURE',
-        () => (error && error.stack ? error.stack : String(error)),
-      );
-    }
-  });
-}
-
-/**
- * Ensures first-open setup has one background execution queued. A card action
- * cannot reliably obtain the web-app URL because it runs under the add-on head
- * deployment; a time-driven execution resolves the deployed web app instead.
- *
- * @return {Object} Current setup status for the sidebar.
- */
-function ensureAdminPageSetupQueued_() {
-  const lock = LockService.getScriptLock();
-  if (!lock.tryLock(RETENTION_CONFIG.LOCK_TIMEOUT_MS)) {
-    return {
-      status: 'queued',
-      message: 'Advanced Settings setup is already being checked.',
-    };
-  }
-  try {
-    return ensureAdminPageSetupQueuedUnlocked_();
-  } finally {
-    lock.releaseLock();
-  }
-}
-
-/** Performs first-open setup while the caller holds the script lock. */
-function ensureAdminPageSetupQueuedUnlocked_() {
-  if (getAdminPageUrl()) {
-    return { status: 'ready', message: '' };
-  }
-
-  let state = getAdminPageSetupState_();
-  const setupTriggers = getAdminPageSetupTriggers_();
-  if (state && state.status === 'error') {
-    return state;
-  }
-
-  if (state && state.status === 'queued') {
-    const queuedAt = new Date(state.updatedAt);
-    if (Date.now() - queuedAt.getTime() < RETENTION_ADMIN_PAGE_SETUP_STALE_MS) {
-      if (setupTriggers.length > 0) {
-        setupTriggers.slice(1).forEach(trigger => ScriptApp.deleteTrigger(trigger));
-        return state;
-      }
-    }
-    deleteAdminPageSetupTriggers_();
-    state = saveAdminPageSetupState_({
-      status: 'error',
-      triggerId: '',
-      updatedAt: new Date().toISOString(),
-      message: 'Advanced Settings setup did not finish. Confirm that the ' +
-        'project has a non-test web app deployment, then retry setup.',
-    });
-    return state;
-  }
-
-  if (setupTriggers.length > 0) {
-    setupTriggers.slice(1).forEach(trigger => ScriptApp.deleteTrigger(trigger));
-    return saveAdminPageSetupState_({
-      status: 'queued',
-      triggerId: setupTriggers[0].getUniqueId(),
-      updatedAt: new Date().toISOString(),
-      message: '',
-    });
-  }
-
-  try {
-    const trigger = ScriptApp.newTrigger(RETENTION_ADMIN_PAGE_SETUP_HANDLER)
-      .timeBased()
-      .after(1000)
-      .create();
-    return saveAdminPageSetupState_({
-      status: 'queued',
-      triggerId: trigger.getUniqueId(),
-      updatedAt: new Date().toISOString(),
-      message: '',
-    });
-  } catch (error) {
-    return saveAdminPageSetupState_({
-      status: 'error',
-      triggerId: '',
-      updatedAt: new Date().toISOString(),
-      message: 'Unable to start Advanced Settings setup. ' +
-        getRuntimeErrorMessage(error),
-    });
-  }
-}
-
-/**
- * One-time background handler that captures the deployed web-app URL and then
- * removes every copy of its temporary setup trigger.
- */
-function registerRetentionAdminPageUrl() {
-  try {
-    const adminPageUrl = rememberCurrentAdminPageUrl_();
-    if (!adminPageUrl) {
-      throw new Error(
-        'No deployed web app URL was available. Confirm that a non-test web ' +
-          'app deployment exists.',
-      );
-    }
-    PropertiesService.getScriptProperties().deleteProperty(
-      RETENTION_ADMIN_PAGE_SETUP_PROPERTY_KEY,
-    );
-  } catch (error) {
-    saveAdminPageSetupState_({
-      status: 'error',
-      triggerId: '',
-      updatedAt: new Date().toISOString(),
-      message: getRuntimeErrorMessage(error),
-    });
-  } finally {
-    deleteAdminPageSetupTriggers_();
-  }
-}
-
-/** Clears a failed setup and immediately queues a fresh one from the card. */
-function retryRetentionAdminPageSetup() {
-  assertAdminOwnerAccess();
-  deleteAdminPageSetupTriggers_();
-  PropertiesService.getScriptProperties().deleteProperty(
-    RETENTION_ADMIN_PAGE_SETUP_PROPERTY_KEY,
-  );
-  const state = ensureAdminPageSetupQueued_();
-  const message = state.status === 'error'
-    ? state.message
-    : 'Advanced Settings setup restarted. Refresh again in a few moments.';
-  return buildSidebarActionResponse_(message);
-}
-
-/**
- * Captures the web-app URL only from non-card execution contexts. This helper
- * is called by doGet() and retention runs, where getService().getUrl() resolves
- * the deployed web app. Gmail card rendering deliberately never calls it.
- *
- * @return {string} Validated and stored web-app URL, or an empty string.
- */
-function rememberCurrentAdminPageUrl_() {
-  try {
-    const currentUrl = normalizeAdminPageUrl_(
-      ScriptApp.getService().getUrl() || '',
-    );
-    if (!currentUrl) {
-      return '';
-    }
-    return storeAdminPageUrl_(currentUrl);
-  } catch (error) {
-    verboseLog(
-      'ADMIN PAGE URL REGISTRATION FAILURE',
-      () => (error && error.stack ? error.stack : String(error)),
-    );
-    return '';
-  }
+  return buildSidebarActionResponse_('Advanced Settings URL saved.');
 }
 
 /**
@@ -5329,6 +5397,7 @@ function saveDeletionReportOutbox_(outbox) {
   const serializable = {
     schemaVersion: RETENTION_DELETION_OUTBOX_SCHEMA_VERSION,
     id: String(outbox.id || Utilities.getUuid()),
+    runId: String(outbox.runId || ''),
     state: outbox.state === 'ready' ? 'ready' : 'planned',
     runDate: new Date(outbox.runDate).toISOString(),
     availableUpdate: outbox.availableUpdate || null,
@@ -5454,6 +5523,7 @@ function getDeletionReportOutbox_() {
     }
     return {
       ...parsed,
+      runId: typeof parsed.runId === 'string' ? parsed.runId : '',
       records: parsed.records.map(deserializeDeletionReportRecord_),
     };
   } catch (error) {
@@ -5514,6 +5584,22 @@ function deliverDeletionReportOutbox_() {
   return sentCount;
 }
 
+/** Recovers the current scan's report without sending it between batches. */
+function prepareDeletionReportOutboxForRun_(runId) {
+  let outbox = getDeletionReportOutbox_();
+  if (!outbox) {
+    return null;
+  }
+  if (outbox.runId !== runId) {
+    deliverDeletionReportOutbox_();
+    return null;
+  }
+  if (outbox.state === 'planned') {
+    outbox = finalizePlannedDeletionReport_(outbox);
+  }
+  return outbox;
+}
+
 /**
  * Compares Gmail label names after normalizing separators, spacing, and case.
  *
@@ -5544,7 +5630,7 @@ function escapeRegExp(value) {
  * @param {Object=} event Apps Script trigger event for scheduled executions.
  * @return {Object} Serializable outcome of the retention run.
  */
-function enforceGmailRetention(event) {
+function enforceGmailRetention(event, requestedRunId) {
   const queuedRequest = getQueuedRetentionRunRequest_();
   const eventTriggerId = event && typeof event.triggerUid === 'string'
     ? event.triggerUid
@@ -5563,11 +5649,24 @@ function enforceGmailRetention(event) {
   }
 
   const startedAt = new Date();
+  const existingContinuation = getRetentionContinuationState_();
+  let runId = existingContinuation && existingContinuation.runId
+    ? existingContinuation.runId
+    : queuedRequest && queuedRequest.runId
+      ? queuedRequest.runId
+      : typeof requestedRunId === 'string' && requestedRunId
+        ? requestedRunId
+        : Utilities.getUuid();
+  const passStartedAt = existingContinuation
+    ? new Date(existingContinuation.scanStartedAt)
+    : startedAt;
   let runSource = queuedSidebarEvent ? 'manual' : getRetentionRunSource(event);
   try {
     const queuedSidebarRun = prepareQueuedRetentionRun_(event);
+    if (queuedSidebarRun && queuedSidebarRun.runId) {
+      runId = queuedSidebarRun.runId;
+    }
     runSource = queuedSidebarRun ? 'manual' : runSource;
-    rememberCurrentAdminPageUrl_();
     const startedState = {
       lastRunSource: runSource,
       lastRunStatus: 'running',
@@ -5575,19 +5674,156 @@ function enforceGmailRetention(event) {
       lastRunStartedAt: startedAt.toISOString(),
       lastRunCompletedAt: null,
       lastResult: null,
+      activeRunId: runId,
     };
     if (runSource === 'scheduled') {
       startedState.lastScheduledRunStartedAt = startedAt.toISOString();
-    } else {
+    } else if (runSource === 'manual') {
       startedState.lastManualRunStartedAt = startedAt.toISOString();
     }
     updateRetentionRuntimeStateSafely(startedState);
 
-    const result = executeGmailRetention_();
+    let result;
+    let quotaWindowStartedAt = Date.now();
+    let consecutiveQuotaPauseCount = 0;
+    while (true) {
+      try {
+        result = executeGmailRetention_(runId);
+        consecutiveQuotaPauseCount = 0;
+      } catch (error) {
+        if (!isGmailApiQuotaError_(error)) {
+          throw error;
+        }
+        const nowMs = Date.now();
+        consecutiveQuotaPauseCount += 1;
+        const remainingWindowMs = Math.max(
+          1000,
+          RETENTION_CONFIG.QUOTA_WINDOW_MS - (nowMs - quotaWindowStartedAt),
+        );
+        const waitMs = consecutiveQuotaPauseCount > 1
+          ? RETENTION_CONFIG.QUOTA_WINDOW_MS
+          : Math.max(RETENTION_CONFIG.MIN_QUOTA_PAUSE_MS, remainingWindowMs);
+        const executionElapsedMs = nowMs - startedAt.getTime();
+        if (
+          executionElapsedMs + waitMs + 30000 >=
+          RETENTION_CONFIG.MAX_INLINE_SCAN_RUNTIME_MS
+        ) {
+          throw error;
+        }
+        const continuation = getRetentionContinuationState_();
+        const pauseTotals = {
+          ...continuation.totals,
+          quotaPauseCount: continuation.totals.quotaPauseCount + 1,
+          quotaWaitMilliseconds:
+            continuation.totals.quotaWaitMilliseconds + waitMs,
+        };
+        saveRetentionContinuationCheckpoint_(
+          continuation.nextOffset,
+          continuation.totalConversationCount,
+          pauseTotals,
+          runId,
+        );
+        const reviewed = pauseTotals.reviewedConversationCount;
+        const total = continuation.totalConversationCount;
+        const elapsedPassMs = nowMs - passStartedAt.getTime();
+        const estimatedRemainingMs = reviewed > 0
+          ? Math.round(
+            (elapsedPassMs / reviewed) * Math.max(0, total - reviewed),
+          ) + waitMs
+          : null;
+        const pausedResult = {
+          ...pauseTotals,
+          runId,
+          status: 'paused',
+          scanComplete: false,
+          totalConversationCount: total,
+          remainingConversationCount: Math.max(0, total - reviewed),
+          progressPercent: total > 0
+            ? Math.min(100, Math.round((reviewed / total) * 100))
+            : 0,
+          continuationQueued: true,
+          nextContinuationAt: new Date(nowMs + waitMs).toISOString(),
+          estimatedCompletionAt: estimatedRemainingMs === null
+            ? null
+            : new Date(nowMs + estimatedRemainingMs).toISOString(),
+          reason: 'Gmail quota reached; processing is waiting to resume.',
+          startedAt: passStartedAt.toISOString(),
+          completedAt: null,
+        };
+        updateRetentionRuntimeStateSafely({
+          lastRunStatus: 'paused',
+          activeRunId: runId,
+          lastResult: pausedResult,
+        });
+        console.warn(
+          `Gmail quota paused scan ${runId} after ${reviewed} of ${total} ` +
+            `conversation(s). Waiting ${Math.ceil(waitMs / 1000)} second(s) ` +
+            `before retrying; no conversations in the rejected batch changed.`,
+        );
+        Utilities.sleep(waitMs);
+        quotaWindowStartedAt = Date.now();
+        updateRetentionRuntimeStateSafely({
+          lastRunStatus: 'running',
+          activeRunId: runId,
+          lastResult: {
+            ...pausedResult,
+            status: 'running',
+            continuationQueued: false,
+            nextContinuationAt: null,
+          },
+        });
+        continue;
+      }
+      const elapsedMs = Date.now() - passStartedAt.getTime();
+      const reviewed = Number(result.reviewedConversationCount || 0);
+      const total = Number(result.totalConversationCount || reviewed);
+      const remaining = Math.max(0, total - reviewed);
+      const estimatedRemainingMs = reviewed > 0
+        ? Math.round((elapsedMs / reviewed) * remaining)
+        : null;
+      result.progressPercent = total > 0
+        ? Math.min(100, Math.round((reviewed / total) * 100))
+        : 100;
+      result.estimatedCompletionAt = estimatedRemainingMs === null
+        ? null
+        : new Date(Date.now() + estimatedRemainingMs).toISOString();
+      if (!result.scanComplete) {
+        updateRetentionRuntimeStateSafely({
+          lastRunStatus: 'running',
+          lastResult: {
+            ...result,
+            startedAt: passStartedAt.toISOString(),
+            completedAt: null,
+          },
+        });
+      }
+      if (
+        result.scanComplete ||
+        Date.now() - startedAt.getTime() >=
+          RETENTION_CONFIG.MAX_INLINE_SCAN_RUNTIME_MS
+      ) {
+        break;
+      }
+    }
+
+    if (!result.scanComplete) {
+      const continuation = getRetentionContinuationState_();
+      scheduleRetentionContinuation_(
+        continuation.nextOffset,
+        continuation.totals,
+        RETENTION_CONFIG.RUNTIME_CONTINUATION_DELAY_MS,
+        runId,
+      );
+      result.status = 'continuing';
+      result.continuationQueued = true;
+      result.nextContinuationAt = new Date(
+        Date.now() + RETENTION_CONFIG.RUNTIME_CONTINUATION_DELAY_MS,
+      ).toISOString();
+    }
     const completedAt = new Date();
     const completedResult = {
       ...result,
-      startedAt: startedAt.toISOString(),
+      startedAt: passStartedAt.toISOString(),
       completedAt: completedAt.toISOString(),
     };
     const stateChanges = {
@@ -5595,17 +5831,18 @@ function enforceGmailRetention(event) {
       lastRunStatus: result.status,
       lastRunCompletedAt: completedAt.toISOString(),
       lastResult: completedResult,
+      activeRunId: result.scanComplete ? null : runId,
     };
 
     if (runSource === 'scheduled') {
       stateChanges.lastScheduledRunCompletedAt = completedAt.toISOString();
       stateChanges.lastScheduledResult = completedResult;
-    } else {
+    } else if (runSource === 'manual') {
       stateChanges.lastManualRunCompletedAt = completedAt.toISOString();
       stateChanges.lastManualResult = completedResult;
     }
 
-    if (result.status === 'success') {
+    if (result.status === 'success' && result.scanComplete !== false) {
       stateChanges.lastSuccessfulRunAt = completedAt.toISOString();
       stateChanges.lastSuccessfulResult = completedResult;
     }
@@ -5623,6 +5860,71 @@ function enforceGmailRetention(event) {
     updateRetentionRuntimeStateSafely(stateChanges);
     return completedResult;
   } catch (error) {
+    if (isGmailApiQuotaError_(error)) {
+      const continuation = getRetentionContinuationState_();
+      if (continuation) {
+        const deferredTotals = {
+          ...continuation.totals,
+          quotaPauseCount: continuation.totals.quotaPauseCount + 1,
+          quotaWaitMilliseconds:
+            continuation.totals.quotaWaitMilliseconds +
+            RETENTION_CONFIG.RUNTIME_CONTINUATION_DELAY_MS,
+        };
+        saveRetentionContinuationCheckpoint_(
+          continuation.nextOffset,
+          continuation.totalConversationCount,
+          deferredTotals,
+          runId,
+        );
+        scheduleRetentionContinuation_(
+          continuation.nextOffset,
+          deferredTotals,
+          RETENTION_CONFIG.RUNTIME_CONTINUATION_DELAY_MS,
+          runId,
+        );
+        const pausedAt = new Date();
+        const reviewed = deferredTotals.reviewedConversationCount;
+        const total = continuation.totalConversationCount;
+        const remaining = Math.max(0, total - reviewed);
+        const elapsedMs = pausedAt.getTime() - passStartedAt.getTime();
+        const estimatedRemainingMs = reviewed > 0
+          ? Math.round((elapsedMs / reviewed) * remaining) +
+            RETENTION_CONFIG.RUNTIME_CONTINUATION_DELAY_MS
+          : null;
+        const pausedResult = {
+          ...deferredTotals,
+          runId,
+          status: 'paused',
+          scanComplete: false,
+          totalConversationCount: total,
+          remainingConversationCount: remaining,
+          progressPercent: total > 0
+            ? Math.min(100, Math.round((reviewed / total) * 100))
+            : 0,
+          continuationQueued: true,
+          nextContinuationAt: new Date(
+            pausedAt.getTime() +
+              RETENTION_CONFIG.RUNTIME_CONTINUATION_DELAY_MS,
+          ).toISOString(),
+          estimatedCompletionAt: estimatedRemainingMs === null
+            ? null
+            : new Date(
+              pausedAt.getTime() + estimatedRemainingMs,
+            ).toISOString(),
+          reason: 'Gmail quota reached; processing will resume automatically.',
+          startedAt: passStartedAt.toISOString(),
+          completedAt: pausedAt.toISOString(),
+        };
+        updateRetentionRuntimeStateSafely({
+          lastRunSource: runSource,
+          lastRunStatus: 'paused',
+          lastRunCompletedAt: pausedAt.toISOString(),
+          activeRunId: runId,
+          lastResult: pausedResult,
+        });
+        return pausedResult;
+      }
+    }
     const failedAt = new Date().toISOString();
     const failedState = {
       lastRunSource: runSource,
@@ -5631,11 +5933,12 @@ function enforceGmailRetention(event) {
       lastErrorAt: failedAt,
       lastErrorMessage: getRuntimeErrorMessage(error),
       lastResult: null,
+      activeRunId: null,
     };
     if (runSource === 'scheduled') {
       failedState.lastScheduledRunCompletedAt = failedAt;
       failedState.lastScheduledResult = null;
-    } else {
+    } else if (runSource === 'manual') {
       failedState.lastManualRunCompletedAt = failedAt;
       failedState.lastManualResult = null;
     }
@@ -5647,7 +5950,7 @@ function enforceGmailRetention(event) {
 }
 
 /** @return {Object} Core retention outcome before dashboard metadata is added. */
-function executeGmailRetention_() {
+function executeGmailRetention_(runId) {
   const settings = getRetentionSettings();
   verboseLog('MAIN', 'enforceGmailRetention() entered.');
   try {
@@ -5658,8 +5961,11 @@ function executeGmailRetention_() {
     const effectiveUserEmail = Session.getEffectiveUser().getEmail();
     const activeUserEmail = Session.getActiveUser().getEmail();
     const notificationRecipient = getNotificationRecipient();
+    const continuationAtBatchStart = getRetentionContinuationState_();
+    const firstBatch = !continuationAtBatchStart ||
+      continuationAtBatchStart.totals.reviewedConversationCount === 0;
     retryPendingManagedSystemEmails_();
-    deliverDeletionReportOutbox_();
+    let accumulatedOutbox = prepareDeletionReportOutboxForRun_(runId);
 
     verboseLog('SESSION', () => ({
       effectiveUserEmail,
@@ -5677,11 +5983,14 @@ function executeGmailRetention_() {
       },
     }));
 
-    console.log(
-      `Starting ${RETENTION_CONFIG.APPLICATION_NAME} ` +
-        `${RETENTION_CONFIG.VERSION}` +
-      `${effectiveUserEmail ? ` for ${effectiveUserEmail}` : ''}.`,
-    );
+    if (firstBatch) {
+      console.log(
+        `Starting ${RETENTION_CONFIG.APPLICATION_NAME} ` +
+          `${RETENTION_CONFIG.VERSION}` +
+        `${effectiveUserEmail ? ` for ${effectiveUserEmail}` : ''}. ` +
+        `Scan ID: ${runId}.`,
+      );
+    }
 
     // Bootstrap starter labels before discovery so a brand-new installation does
     // not exit with "No valid retention labels" on its first authorized run.
@@ -5708,6 +6017,7 @@ function executeGmailRetention_() {
       discoveredRetentionLabels.length === 0 &&
       !systemNotificationLabel
     ) {
+      clearRetentionContinuation_();
       const updateOnlyEmailCount = sendUpdateOnlyNotificationIfNeeded(
         availableUpdate,
         now,
@@ -5717,9 +6027,15 @@ function executeGmailRetention_() {
           `process. Sent ${updateOnlyEmailCount} update-only email(s).`,
       );
       return {
+        runId,
         status: 'success',
         reviewedConversationCount: 0,
+        totalConversationCount: 0,
+        remainingConversationCount: 0,
+        scanComplete: true,
         movedMessageCount: 0,
+        movedOrdinaryMessageCount: 0,
+        movedSystemMessageCount: 0,
         movedConversationCount: 0,
         reportedMessageCount: 0,
         removedRetentionLabelCount: 0,
@@ -5731,6 +6047,8 @@ function executeGmailRetention_() {
         operationErrors: [],
         summaryEmailCount: 0,
         updateOnlyEmailCount,
+        quotaPauseCount: 0,
+        quotaWaitMilliseconds: 0,
         availableUpdate,
       };
     }
@@ -5742,12 +6060,37 @@ function executeGmailRetention_() {
      * partially failed run.
      */
     verboseLog('THREAD COLLECTION', 'Beginning unique-thread collection.');
-    const threadMap = collectUniqueThreads(
+    const allThreadMap = collectUniqueThreads(
       discoveredRetentionLabels,
       systemNotificationLabel,
     );
-    verboseLog('THREAD COLLECTION', () => (`Collected ${threadMap.size} unique thread(s).`));
-    preflightGmailApiThreads_(threadMap);
+    verboseLog('THREAD COLLECTION', () => (`Collected ${allThreadMap.size} unique thread(s).`));
+    const processingBatch = selectGmailThreadProcessingBatch_(allThreadMap);
+    const threadMap = processingBatch.threadMap;
+    verboseLog('THREAD BATCH', () => ({
+      totalConversationCount: processingBatch.totalConversationCount,
+      batchOffset: processingBatch.batchOffset,
+      batchSize: threadMap.size,
+      scanComplete: processingBatch.scanComplete,
+    }));
+    saveRetentionContinuationCheckpoint_(
+      processingBatch.batchOffset,
+      processingBatch.totalConversationCount,
+      processingBatch.priorTotals,
+      runId,
+    );
+    try {
+      preflightGmailApiThreads_(threadMap);
+    } catch (error) {
+      if (isGmailApiQuotaError_(error)) {
+        throw new Error(
+          `Gmail's per-minute quota was too low to start the next batch. ` +
+            `No conversations in that batch were changed. Details: ` +
+            getRuntimeErrorMessage(error),
+        );
+      }
+      throw error;
+    }
     const pendingDeletions = [];
     const excludedArchiveMessageIds = new Set();
     let removedRetentionLabelCount = 0;
@@ -5912,6 +6255,7 @@ function executeGmailRetention_() {
         messagesToTrash: activeMessages,
         messageRecords,
         isSystemNotification,
+        trashWholeThread: !threadIsInTrash,
       });
       activeMessages.forEach(message => {
         excludedArchiveMessageIds.add(message.getId());
@@ -5922,32 +6266,41 @@ function executeGmailRetention_() {
       ? archiveRetentionLabeledInboxMessages(
           discoveredRetentionLabels,
           excludedArchiveMessageIds,
+          new Set(threadMap.keys()),
         )
       : createEmptyArchiveResult();
     const plannedReportRecords = pendingDeletions.flatMap(item =>
       item.isSystemNotification ? [] : item.messageRecords,
     );
     if (plannedReportRecords.length > 0) {
+      const priorRecords = accumulatedOutbox ? accumulatedOutbox.records : [];
       saveDeletionReportOutbox_({
+        runId,
         state: 'planned',
-        runDate: now,
-        availableUpdate,
+        runDate: accumulatedOutbox ? accumulatedOutbox.runDate : now,
+        availableUpdate: accumulatedOutbox
+          ? accumulatedOutbox.availableUpdate
+          : availableUpdate,
         sentPartCount: 0,
-        records: plannedReportRecords,
+        records: [...priorRecords, ...plannedReportRecords],
       });
     }
     const deletionResult = movePendingMessagesToTrash(pendingDeletions);
     const deletedMessageRecords = deletionResult.deletedMessageRecords;
     if (plannedReportRecords.length > 0) {
+      const priorRecords = accumulatedOutbox ? accumulatedOutbox.records : [];
       if (deletedMessageRecords.length > 0) {
-        saveDeletionReportOutbox_({
+        accumulatedOutbox = saveDeletionReportOutbox_({
+          runId,
           state: 'ready',
-          runDate: now,
-          availableUpdate,
+          runDate: accumulatedOutbox ? accumulatedOutbox.runDate : now,
+          availableUpdate: accumulatedOutbox
+            ? accumulatedOutbox.availableUpdate
+            : availableUpdate,
           sentPartCount: 0,
-          records: deletedMessageRecords,
+          records: [...priorRecords, ...deletedMessageRecords],
         });
-      } else {
+      } else if (priorRecords.length === 0) {
         clearDeletionReportOutbox_();
       }
     }
@@ -5959,43 +6312,91 @@ function executeGmailRetention_() {
      * Only ordinary deleted messages generate a notification. When the only
      * deletion is an expired system notification, no new notification is sent.
      */
-    const summaryEmailCount = deletedMessageRecords.length > 0
+    const summaryEmailCount = processingBatch.scanComplete &&
+        accumulatedOutbox && accumulatedOutbox.records.length > 0
       ? deliverDeletionReportOutbox_()
       : 0;
-    const updateOnlyEmailCount = deletedMessageRecords.length === 0
+    const updateOnlyEmailCount =
+      processingBatch.scanComplete &&
+        (!accumulatedOutbox || accumulatedOutbox.records.length === 0)
       ? sendUpdateOnlyNotificationIfNeeded(availableUpdate, now)
       : 0;
 
     const operationErrors = [...archiveResult.errors];
-    const result = {
-      status: operationErrors.length > 0 ? 'warning' : 'success',
+    const batchTotals = {
       reviewedConversationCount: threadMap.size,
       movedMessageCount: deletionResult.movedMessageCount,
+      movedOrdinaryMessageCount: deletionResult.movedOrdinaryMessageCount,
+      movedSystemMessageCount: deletionResult.movedSystemMessageCount,
       movedConversationCount: deletionResult.movedThreadCount,
       reportedMessageCount: deletedMessageRecords.length,
       removedRetentionLabelCount,
-      archiveOnLabelEnabled: settings.ARCHIVE_ON_LABEL,
       archivedMessageCount: archiveResult.archivedMessageCount,
       archivedConversationCount: archiveResult.archivedConversationCount,
       archiveLookupFailureCount: archiveResult.lookupFailureCount,
       archiveFailedMessageCount: archiveResult.failedMessageCount,
-      operationErrors,
       summaryEmailCount,
       updateOnlyEmailCount,
+      quotaPauseCount: 0,
+      quotaWaitMilliseconds: 0,
+    };
+    const passTotals = addRetentionContinuationTotals_(
+      processingBatch.priorTotals,
+      batchTotals,
+    );
+    const result = {
+      runId,
+      status: operationErrors.length > 0 ? 'warning' : 'success',
+      ...passTotals,
+      totalConversationCount: processingBatch.totalConversationCount,
+      remainingConversationCount: Math.max(
+        0,
+        processingBatch.totalConversationCount - processingBatch.nextOffset,
+      ),
+      scanComplete: processingBatch.scanComplete,
+      archiveOnLabelEnabled: settings.ARCHIVE_ON_LABEL,
+      operationErrors,
       availableUpdate,
     };
 
+    if (processingBatch.scanComplete) {
+      clearRetentionContinuation_();
+    } else {
+      saveRetentionContinuationCheckpoint_(
+        processingBatch.nextOffset,
+        processingBatch.totalConversationCount,
+        passTotals,
+        runId,
+      );
+    }
+
     console.log([
-      `Reviewed ${result.reviewedConversationCount} conversation(s).`,
-      `Moved ${result.movedMessageCount} active message(s) to Trash ` +
-        `from ${result.movedConversationCount} conversation(s).`,
-      `Reported ${result.reportedMessageCount} deleted message(s).`,
-      `Removed ${result.removedRetentionLabelCount} redundant retention label(s).`,
+      result.scanComplete
+        ? `Completed ${result.reviewedConversationCount} of ` +
+          `${result.totalConversationCount} conversation(s). Final totals: `
+        : `Progress: ${result.reviewedConversationCount} of ` +
+          `${result.totalConversationCount} conversation(s); ` +
+          `${result.remainingConversationCount} remain. This chunk: `,
+      `moved ${result.scanComplete ? result.movedMessageCount : batchTotals.movedMessageCount} ` +
+        `active message(s) (` +
+        `${result.scanComplete ? result.movedOrdinaryMessageCount : batchTotals.movedOrdinaryMessageCount} reportable, ` +
+        `${result.scanComplete ? result.movedSystemMessageCount : batchTotals.movedSystemMessageCount} internal system) from ` +
+        `${result.scanComplete ? result.movedConversationCount : batchTotals.movedConversationCount} conversation(s);`,
+      `reported ${result.scanComplete ? result.reportedMessageCount : batchTotals.reportedMessageCount} deleted message(s);`,
+      `removed ${result.scanComplete ? result.removedRetentionLabelCount : batchTotals.removedRetentionLabelCount} redundant retention label(s).`,
+      result.scanComplete && result.quotaPauseCount > 0
+        ? `Paused ${result.quotaPauseCount} time(s) for Gmail quota, waiting ` +
+          `${Math.ceil(result.quotaWaitMilliseconds / 1000)} second(s) total.`
+        : '',
       settings.ARCHIVE_ON_LABEL
-        ? `Archived ${result.archivedMessageCount} labeled Inbox message(s) ` +
-          `from ${result.archivedConversationCount} conversation(s). ` +
-          `Archive warnings: ${result.archiveLookupFailureCount} lookup ` +
-          `failure(s), ${result.archiveFailedMessageCount} message move failure(s).`
+        ? `Archived ${result.scanComplete ? result.archivedMessageCount : batchTotals.archivedMessageCount} ` +
+          `labeled Inbox message(s) from ` +
+          `${result.scanComplete ? result.archivedConversationCount : batchTotals.archivedConversationCount} ` +
+          `conversation(s). Archive warnings: ` +
+          `${result.scanComplete ? result.archiveLookupFailureCount : batchTotals.archiveLookupFailureCount} ` +
+          `lookup failure(s), ` +
+          `${result.scanComplete ? result.archiveFailedMessageCount : batchTotals.archiveFailedMessageCount} ` +
+          `message move failure(s).`
         : 'Archive-on-label is disabled.',
       availableUpdate
         ? `Update v${availableUpdate.version} is available. ` +
@@ -6006,6 +6407,9 @@ function executeGmailRetention_() {
 
     return result;
   } catch (error) {
+    if (isGmailApiQuotaError_(error)) {
+      throw error;
+    }
     console.error(
       `${RETENTION_CONFIG.APPLICATION_NAME} ${RETENTION_CONFIG.VERSION} failed: ` +
       `${error && error.stack ? error.stack : error}`,
@@ -6285,9 +6689,9 @@ function collectUniqueThreads(retentionPolicies, systemNotificationLabel) {
 }
 
 /**
- * Loads every relevant conversation before any conversation label or message is
- * changed. A persistent Gmail read failure therefore stops the run fail-closed
- * instead of producing incomplete retention results.
+ * Loads every conversation in the current quota-safe batch before any label or
+ * message is changed. A persistent Gmail read failure therefore stops that
+ * batch fail-closed instead of producing incomplete retention results.
  */
 function preflightGmailApiThreads_(threadMap) {
   verboseLog(
@@ -6320,6 +6724,32 @@ function preflightGmailApiThreads_(threadMap) {
     }
   }
   verboseLog('THREAD PREFLIGHT', 'All conversations passed validation.');
+}
+
+/**
+ * Selects one stable, quota-safe slice of the discovered conversations.
+ * The offset advances across follow-up executions and resets after a full pass.
+ */
+function selectGmailThreadProcessingBatch_(threadMap) {
+  const allEntries = [...threadMap.entries()];
+  const saved = getRetentionContinuationState_();
+  const requestedOffset = saved ? saved.nextOffset : 0;
+  const offset = requestedOffset < allEntries.length ? requestedOffset : 0;
+  const entries = allEntries.slice(
+    offset,
+    offset + RETENTION_CONFIG.THREAD_PROCESSING_BATCH_SIZE,
+  );
+  const nextOffset = offset + entries.length;
+  return {
+    threadMap: new Map(entries),
+    totalConversationCount: allEntries.length,
+    batchOffset: offset,
+    nextOffset,
+    scanComplete: nextOffset >= allEntries.length,
+    priorTotals: saved
+      ? saved.totals
+      : createEmptyRetentionContinuationTotals_(),
+  };
 }
 
 /**
@@ -6765,11 +7195,13 @@ function listInboxMessagesForRetentionLabel(labelId) {
  *
  * @param {Array} retentionPolicies Discovered valid retention-label policies.
  * @param {Set<string>} excludedMessageIds Messages that must not be archived.
+ * @param {Set<string>=} includedThreadIds Optional quota-safe thread batch.
  * @return {Object} Successful archive counts and nonfatal failure counts.
  */
 function archiveRetentionLabeledInboxMessages(
   retentionPolicies,
   excludedMessageIds,
+  includedThreadIds,
 ) {
   const result = createEmptyArchiveResult();
   const uniqueLabels = new Map();
@@ -6802,7 +7234,13 @@ function archiveRetentionLabeledInboxMessages(
     try {
       const messages = listInboxMessagesForRetentionLabel(labelId);
       messages.forEach(message => {
-        if (!excludedMessageIds.has(message.id)) {
+        if (
+          !excludedMessageIds.has(message.id) &&
+          (
+            !includedThreadIds ||
+            includedThreadIds.has(message.threadId)
+          )
+        ) {
           candidateMessages.set(message.id, message);
         }
       });
@@ -6868,12 +7306,18 @@ function archiveRetentionLabeledInboxMessages(
  *
  * @param {Array} pendingDeletions Threads, active messages, and report data.
  * @return {{deletedMessageRecords: Array, movedMessageCount: number,
+ *   movedOrdinaryMessageCount: number, movedSystemMessageCount: number,
  *   movedThreadCount: number}} Successful deletion details.
  */
 function movePendingMessagesToTrash(pendingDeletions) {
   const pendingMessages = [];
+  const wholeThreadDeletions = [];
 
   for (const item of pendingDeletions) {
+    if (item.trashWholeThread && typeof item.thread.moveToTrash === 'function') {
+      wholeThreadDeletions.push(item);
+      continue;
+    }
     item.messagesToTrash.forEach((message, messageIndex) => {
       pendingMessages.push({
         message,
@@ -6895,6 +7339,24 @@ function movePendingMessagesToTrash(pendingDeletions) {
   const movedThreadIds = new Set();
   const systemNotificationThreads = new Map();
   let movedMessageCount = 0;
+  let movedOrdinaryMessageCount = 0;
+  let movedSystemMessageCount = 0;
+
+  for (const item of wholeThreadDeletions) {
+    item.thread.moveToTrash();
+    movedMessageCount += item.messagesToTrash.length;
+    if (item.isSystemNotification) {
+      movedSystemMessageCount += item.messagesToTrash.length;
+    } else {
+      movedOrdinaryMessageCount += item.messagesToTrash.length;
+    }
+    movedThreadIds.add(item.thread.getId());
+    if (item.isSystemNotification) {
+      systemNotificationThreads.set(item.thread.getId(), item.thread);
+    } else {
+      item.messageRecords.forEach(record => deletedMessageRecords.push(record));
+    }
+  }
 
   for (const item of pendingMessages) {
     // Recheck in case the user manually trashed the message after collection.
@@ -6909,6 +7371,11 @@ function movePendingMessagesToTrash(pendingDeletions) {
 
     item.message.moveToTrash();
     movedMessageCount += 1;
+    if (item.isSystemNotification) {
+      movedSystemMessageCount += 1;
+    } else {
+      movedOrdinaryMessageCount += 1;
+    }
     movedThreadIds.add(item.thread.getId());
 
     if (item.isSystemNotification) {
@@ -6927,6 +7394,8 @@ function movePendingMessagesToTrash(pendingDeletions) {
   return {
     deletedMessageRecords,
     movedMessageCount,
+    movedOrdinaryMessageCount,
+    movedSystemMessageCount,
     movedThreadCount: movedThreadIds.size,
   };
 }
